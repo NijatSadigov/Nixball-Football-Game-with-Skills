@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nixball",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dist/server.cjs"],
+      "port": 3000
+    }
+  ]
+}

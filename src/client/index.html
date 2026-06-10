@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NixBall — online football with skills</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- ============ HOME ============ -->
+      <section id="screen-home" class="screen">
+        <div class="home-wrap">
+          <h1 class="logo">Nix<span>Ball</span></h1>
+          <p class="tagline">Haxball-style online football — with characters &amp; skills.</p>
+
+          <div class="card">
+            <label class="field-label" for="nick">Nickname</label>
+            <input id="nick" maxlength="16" placeholder="Your name" autocomplete="off" />
+            <div class="row gap">
+              <button id="btn-create" class="primary">Create room</button>
+              <input id="join-code" placeholder="CODE" maxlength="5" autocomplete="off" />
+              <button id="btn-join">Join</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="row spread">
+              <h2>Public rooms</h2>
+              <button id="btn-refresh" class="ghost small">Refresh</button>
+            </div>
+            <ul id="room-list"></ul>
+            <p id="room-list-empty" class="muted">No public rooms right now — create one!</p>
+          </div>
+
+          <p class="muted hint">Move: WASD / arrows &nbsp;·&nbsp; Kick: X or Space &nbsp;·&nbsp; Skill: E &nbsp;·&nbsp; Chat: Enter</p>
+          <p id="conn-status" class="muted"></p>
+        </div>
+      </section>
+
+      <!-- ============ LOBBY ============ -->
+      <section id="screen-lobby" class="screen hidden">
+        <div class="lobby-wrap">
+          <header class="lobby-head">
+            <h2 id="lobby-name"></h2>
+            <button id="lobby-code" class="code-chip" title="Copy invite link"></button>
+            <span id="lobby-settings" class="muted"></span>
+            <span class="flex-spacer"></span>
+            <button id="btn-leave-lobby" class="ghost">Leave</button>
+          </header>
+
+          <div class="teams">
+            <div class="team-col red">
+              <h3>Red</h3>
+              <ul id="team-red"></ul>
+              <button data-team="0" class="join-team">Join Red</button>
+            </div>
+            <div class="team-col spec">
+              <h3>Spectators</h3>
+              <ul id="team-spec"></ul>
+              <button data-team="-1" class="join-team">Spectate</button>
+            </div>
+            <div class="team-col blue">
+              <h3>Blue</h3>
+              <ul id="team-blue"></ul>
+              <button data-team="1" class="join-team">Join Blue</button>
+            </div>
+          </div>
+
+          <h3 class="char-title">Choose your character</h3>
+          <div id="char-row"></div>
+
+          <div class="lobby-bottom">
+            <div class="chat card">
+              <ul id="chat-log"></ul>
+              <form id="chat-form">
+                <input id="chat-input" maxlength="120" placeholder="Say something…" autocomplete="off" />
+              </form>
+            </div>
+            <div class="start-box">
+              <button id="btn-start" class="primary big">Start match</button>
+              <p id="start-hint" class="muted"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ GAME ============ -->
+      <section id="screen-game" class="screen hidden">
+        <canvas id="game-canvas"></canvas>
+        <div id="hud">
+          <div id="hud-top">
+            <span class="score red" id="hud-score-red">0</span>
+            <span id="hud-clock">0:00</span>
+            <span class="score blue" id="hud-score-blue">0</span>
+          </div>
+          <div id="hud-golden" class="hidden">⚡ GOLDEN GOAL — next goal wins</div>
+          <div id="hud-banner" class="hidden"></div>
+          <div id="hud-skill" class="hidden">
+            <span id="hud-skill-key">E</span>
+            <span id="hud-skill-name"></span>
+            <div id="hud-skill-bar"><div id="hud-skill-cd"></div></div>
+          </div>
+          <div id="hud-chatlog"></div>
+          <form id="hud-chat-form" class="hidden">
+            <input id="hud-chat-input" maxlength="120" placeholder="Chat… (Esc to close)" autocomplete="off" />
+          </form>
+          <div id="hud-spectate" class="hidden">
+            <span>Spectating</span>
+            <button data-team="0" class="join-team red-btn">Join Red</button>
+            <button data-team="1" class="join-team blue-btn">Join Blue</button>
+          </div>
+          <div id="hud-buttons">
+            <button id="btn-stop" class="ghost small hidden">End match</button>
+            <button id="btn-leave-game" class="ghost small">Leave</button>
+          </div>
+          <div id="hud-hint">WASD move · X/Space kick · E skill · Enter chat</div>
+        </div>
+      </section>
+    </div>
+
+    <dialog id="create-dialog">
+      <form id="create-form" method="dialog">
+        <h2>Create room</h2>
+        <label>Room name <input id="cr-name" maxlength="24" placeholder="My room" autocomplete="off" /></label>
+        <label>Score limit <input id="cr-score" type="number" min="0" max="20" value="3" /><span class="muted">0 = unlimited</span></label>
+        <label>Time limit (min) <input id="cr-time" type="number" min="0" max="30" value="5" /><span class="muted">0 = unlimited</span></label>
+        <label>Max players <input id="cr-max" type="number" min="2" max="12" value="8" /></label>
+        <label class="check"><input id="cr-public" type="checkbox" checked /> Show in public room list</label>
+        <div class="row gap end">
+          <button type="button" id="cr-cancel" class="ghost">Cancel</button>
+          <button value="ok" class="primary">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
