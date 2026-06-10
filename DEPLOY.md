@@ -4,6 +4,9 @@ NixBall is one Node.js process that serves both the static client and the game
 WebSocket on a single port. That makes it ideal for a subdomain reverse proxy,
 e.g. `nixball.yourdomain.com` next to your portfolio.
 
+Ready-made config files live in [`deploy/`](deploy/): `nixball.service` (systemd),
+`nginx-nixball.conf` (reverse proxy), and `update.sh` (pull + rebuild + restart).
+
 > **Hosting requirement:** you need somewhere you can run a long-lived Node 20+
 > process (a VPS, or your own server). Plain static/shared hosting (cPanel file
 > hosting, GitHub Pages, etc.) cannot host the game server because it needs
