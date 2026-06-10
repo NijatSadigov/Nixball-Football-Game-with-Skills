@@ -1,0 +1,16 @@
+[Unit]
+Description=NixBall game server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/nixball
+ExecStart=/usr/bin/node /opt/nixball/dist/server.cjs
+Environment=PORT=3001
+Environment=NODE_ENV=production
+Restart=always
+RestartSec=3
+# change to your deploy user if www-data can't read /opt/nixball
+User=www-data
+
+[Install]
+WantedBy=multi-user.target
