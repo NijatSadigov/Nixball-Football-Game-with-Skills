@@ -53,23 +53,7 @@
             <button id="btn-leave-lobby" class="ghost">Leave</button>
           </header>
 
-          <div class="teams">
-            <div class="team-col red">
-              <h3>Red</h3>
-              <ul id="team-red"></ul>
-              <button data-team="0" class="join-team">Join Red</button>
-            </div>
-            <div class="team-col spec">
-              <h3>Spectators</h3>
-              <ul id="team-spec"></ul>
-              <button data-team="-1" class="join-team">Spectate</button>
-            </div>
-            <div class="team-col blue">
-              <h3>Blue</h3>
-              <ul id="team-blue"></ul>
-              <button data-team="1" class="join-team">Join Blue</button>
-            </div>
-          </div>
+          <div class="teams" id="teams-area"></div>
 
           <h3 class="char-title">Choose your character</h3>
           <div id="char-row"></div>
@@ -94,9 +78,8 @@
         <canvas id="game-canvas"></canvas>
         <div id="hud">
           <div id="hud-top">
-            <span class="score red" id="hud-score-red">0</span>
+            <span id="hud-scores"></span>
             <span id="hud-clock">0:00</span>
-            <span class="score blue" id="hud-score-blue">0</span>
           </div>
           <div id="hud-golden" class="hidden">⚡ GOLDEN GOAL — next goal wins</div>
           <div id="hud-banner" class="hidden"></div>
@@ -111,8 +94,7 @@
           </form>
           <div id="hud-spectate" class="hidden">
             <span>Spectating</span>
-            <button data-team="0" class="join-team red-btn">Join Red</button>
-            <button data-team="1" class="join-team blue-btn">Join Blue</button>
+            <span id="hud-spectate-btns"></span>
           </div>
           <div id="hud-buttons">
             <button id="btn-stop" class="ghost small hidden">End match</button>
@@ -130,6 +112,14 @@
         <label>Score limit <input id="cr-score" type="number" min="0" max="20" value="3" /><span class="muted">0 = unlimited</span></label>
         <label>Time limit (min) <input id="cr-time" type="number" min="0" max="30" value="5" /><span class="muted">0 = unlimited</span></label>
         <label>Max players <input id="cr-max" type="number" min="2" max="12" value="8" /></label>
+        <label>Teams
+          <select id="cr-teams">
+            <option value="2" selected>2 (classic)</option>
+            <option value="3">3 — three goals</option>
+            <option value="4">4 — four goals</option>
+          </select>
+        </label>
+        <label class="check"><input id="cr-hot" type="checkbox" /> Hot ball — fires off any touch</label>
         <label class="check"><input id="cr-public" type="checkbox" checked /> Show in public room list</label>
         <div class="row gap end">
           <button type="button" id="cr-cancel" class="ghost">Cancel</button>

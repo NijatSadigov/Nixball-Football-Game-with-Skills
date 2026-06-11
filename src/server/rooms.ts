@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   ROOM,
   SNAP_EVERY,
+  TEAMS,
   TICK_RATE,
 } from '../shared/constants';
 import { isCharacterId } from '../shared/characters';
@@ -143,6 +144,7 @@ class Room {
   }
 
   setTeam(m: Member, team: TeamOrSpec): void {
+    if (team !== -1 && (team < 0 || team >= this.settings.teams)) return;
     if (m.team === team) return;
     m.team = team;
     if (this.sim) {
@@ -170,13 +172,13 @@ class Room {
     }
     if (this.sim) return;
     const roster = [...this.members.values()]
-      .filter((p) => p.team === 0 || p.team === 1)
-      .map((p) => ({ id: p.id, team: p.team as 0 | 1, charId: p.charId }));
+      .filter((p) => p.team >= 0 && p.team < this.settings.teams)
+      .map((p) => ({ id: p.id, team: p.team as number, charId: p.charId }));
     if (roster.length === 0) {
       send(m, { t: 'error', msg: 'At least one player must join a team.' });
       return;
     }
-    this.sim = createMatch(roster);
+    this.sim = createMatch(roster, this.settings.teams);
     this.endedAtTick = 0;
     this.sendRoomState();
     this.broadcast({ t: 'ev', e: 'kickoff' });
@@ -215,20 +217,24 @@ class Room {
     const cfg = {
       scoreLimit: this.settings.scoreLimit,
       timeLimitTicks: this.settings.timeLimitMin * 60 * TICK_RATE,
+      hotball: this.settings.hotball,
     };
     const events = stepMatch(sim, cfg, Math.random);
     for (const ev of events) {
       this.broadcast(this.wireEvent(ev));
       if (ev.kind === 'goal') {
+        const scoreLine = sim.score.join(' - ');
         this.sysChat(
-          `GOAL! ${ev.team === 0 ? 'Red' : 'Blue'} scores. ${sim.score[0]} - ${sim.score[1]}`,
+          ev.team >= 0
+            ? `GOAL! ${TEAMS[ev.team].name} scores. ${scoreLine}`
+            : `Own goal! Nobody is credited. ${scoreLine}`,
         );
       } else if (ev.kind === 'end') {
         this.endedAtTick = sim.tick;
         this.sysChat(
           ev.winner === -1
             ? 'Match over: draw.'
-            : `Match over: ${ev.winner === 0 ? 'Red' : 'Blue'} wins ${sim.score[0]} - ${sim.score[1]}!`,
+            : `Match over: ${TEAMS[ev.winner].name} wins ${sim.score.join(' - ')}!`,
         );
       }
     }
@@ -262,7 +268,7 @@ class Room {
       ph: sim.phase,
       b: [r2(sim.ball.x), r2(sim.ball.y), r2(sim.ball.vx), r2(sim.ball.vy)],
       p: players,
-      s: [sim.score[0], sim.score[1]],
+      s: [...sim.score],
       c: sim.clock,
       g: sim.golden ? 1 : 0,
     };
@@ -330,6 +336,8 @@ export class RoomManager {
         players: r.members.size,
         max: r.settings.maxPlayers,
         phase: r.phase,
+        teams: r.settings.teams,
+        hotball: r.settings.hotball,
       });
       if (list.length >= 50) break;
     }
@@ -375,6 +383,8 @@ export class RoomManager {
           scoreLimit: clampInt(msg.scoreLimit, 0, 20, 3),
           timeLimitMin: clampInt(msg.timeLimitMin, 0, 30, 5),
           maxPlayers: clampInt(msg.maxPlayers, 2, ROOM.maxPlayersCap, ROOM.defaultMaxPlayers),
+          teams: clampInt(msg.teams, 2, 4, 2),
+          hotball: msg.hotball === true,
         };
         const room = new Room(this.genCode(), name, msg.isPublic === true, settings);
         this.rooms.set(room.code, room);
@@ -405,7 +415,10 @@ export class RoomManager {
 
       case 'team': {
         if (!m.room) return;
-        const team = msg.team === 0 || msg.team === 1 ? msg.team : -1;
+        const team =
+          typeof msg.team === 'number' && Number.isInteger(msg.team) && msg.team >= 0 && msg.team <= 3
+            ? (msg.team as TeamOrSpec)
+            : -1;
         m.room.setTeam(m, team);
         break;
       }

@@ -1,6 +1,6 @@
-import { PROTOCOL_VERSION } from '../shared/constants';
+import { PROTOCOL_VERSION, TEAMS } from '../shared/constants';
 import { CHARACTERS, getCharacter } from '../shared/characters';
-import type { RoomListing, RoomStateMsg } from '../shared/types';
+import type { RoomListing, RoomStateMsg, TeamOrSpec } from '../shared/types';
 import { GameView } from './game';
 import { InputManager } from './input';
 import { Net } from './net';
@@ -31,9 +31,7 @@ const els = {
   lobbyCode: $<HTMLButtonElement>('lobby-code'),
   lobbySettings: $('lobby-settings'),
   btnLeaveLobby: $<HTMLButtonElement>('btn-leave-lobby'),
-  teamRed: $('team-red'),
-  teamSpec: $('team-spec'),
-  teamBlue: $('team-blue'),
+  teamsArea: $('teams-area'),
   charRow: $('char-row'),
   chatLog: $('chat-log'),
   chatForm: $<HTMLFormElement>('chat-form'),
@@ -45,6 +43,7 @@ const els = {
   hudChatlog: $('hud-chatlog'),
   hudChatForm: $<HTMLFormElement>('hud-chat-form'),
   hudChatInput: $<HTMLInputElement>('hud-chat-input'),
+  hudSpectateBtns: $('hud-spectate-btns'),
   btnStop: $<HTMLButtonElement>('btn-stop'),
   btnLeaveGame: $<HTMLButtonElement>('btn-leave-game'),
 
@@ -54,6 +53,8 @@ const els = {
   crScore: $<HTMLInputElement>('cr-score'),
   crTime: $<HTMLInputElement>('cr-time'),
   crMax: $<HTMLInputElement>('cr-max'),
+  crTeams: $<HTMLSelectElement>('cr-teams'),
+  crHot: $<HTMLInputElement>('cr-hot'),
   crPublic: $<HTMLInputElement>('cr-public'),
 
   toast: $('toast'),
@@ -67,8 +68,7 @@ const sfx = new Sfx();
 const gameView = new GameView(
   els.canvas,
   {
-    scoreRed: $('hud-score-red'),
-    scoreBlue: $('hud-score-blue'),
+    scores: $('hud-scores'),
     clock: $('hud-clock'),
     golden: $('hud-golden'),
     banner: $('hud-banner'),
@@ -84,7 +84,7 @@ let currentRoom: RoomStateMsg | null = null;
 let myId = 0;
 let helloName = '';
 let pendingJoinCode: string | null = null; // from invite link or reconnect
-let rejoinTeam: -1 | 0 | 1 = -1;
+let rejoinTeam: TeamOrSpec = -1;
 let reconnectTimer = 0;
 let toastTimer = 0;
 
@@ -130,6 +130,8 @@ function renderRooms(rooms: RoomListing[]): void {
     const full = r.players >= r.max;
     li.innerHTML =
       `<span class="r-name">${escapeHtml(r.name)}</span>` +
+      (r.teams > 2 ? `<span class="badge">${r.teams} teams</span>` : '') +
+      (r.hotball ? `<span class="badge hot">hot ball</span>` : '') +
       `<span class="badge ${r.phase === 'match' ? 'live' : ''}">${r.phase === 'match' ? 'live' : 'lobby'}</span>` +
       `<span class="r-meta">${r.players}/${r.max}</span>`;
     const btn = document.createElement('button');
@@ -170,6 +172,8 @@ els.createForm.addEventListener('submit', () => {
     scoreLimit: Number(els.crScore.value),
     timeLimitMin: Number(els.crTime.value),
     maxPlayers: Number(els.crMax.value),
+    teams: Number(els.crTeams.value),
+    hotball: els.crHot.checked,
   });
 });
 
@@ -207,6 +211,14 @@ function memberChip(member: { id: number; name: string; charId: string }, hostId
   return li;
 }
 
+function joinTeamButton(team: TeamOrSpec, label: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.className = 'join-team';
+  btn.textContent = label;
+  btn.addEventListener('click', () => net.send({ t: 'team', team }));
+  return btn;
+}
+
 function renderLobby(): void {
   const room = currentRoom;
   if (!room) return;
@@ -215,21 +227,36 @@ function renderLobby(): void {
   const parts: string[] = [];
   parts.push(room.settings.scoreLimit > 0 ? `first to ${room.settings.scoreLimit}` : 'no score limit');
   parts.push(room.settings.timeLimitMin > 0 ? `${room.settings.timeLimitMin} min` : 'no time limit');
+  if (room.settings.teams > 2) parts.push(`${room.settings.teams} teams`);
+  if (room.settings.hotball) parts.push('hot ball');
   parts.push(room.isPublic ? 'public' : 'private');
   els.lobbySettings.textContent = parts.join(' · ');
 
-  els.teamRed.innerHTML = '';
-  els.teamSpec.innerHTML = '';
-  els.teamBlue.innerHTML = '';
-  for (const m of room.members) {
-    const target = m.team === 0 ? els.teamRed : m.team === 1 ? els.teamBlue : els.teamSpec;
-    target.appendChild(memberChip(m, room.host));
-  }
-
   const me = room.members.find((m) => m.id === myId);
-  document.querySelectorAll<HTMLButtonElement>('.join-team').forEach((btn) => {
-    btn.disabled = me ? Number(btn.dataset.team) === me.team : false;
-  });
+
+  // one column per team plus spectators
+  els.teamsArea.innerHTML = '';
+  els.teamsArea.style.gridTemplateColumns = `repeat(${room.settings.teams + 1}, 1fr)`;
+  const columns: { team: TeamOrSpec; label: string; color?: string }[] = [];
+  for (let i = 0; i < room.settings.teams; i++) {
+    columns.push({ team: i as TeamOrSpec, label: TEAMS[i].name, color: TEAMS[i].color });
+  }
+  columns.push({ team: -1, label: 'Spectators' });
+  for (const col of columns) {
+    const div = document.createElement('div');
+    div.className = 'team-col';
+    const h = document.createElement('h3');
+    h.textContent = col.label;
+    h.style.color = col.color ?? 'var(--muted)';
+    const ul = document.createElement('ul');
+    for (const m of room.members) {
+      if (m.team === col.team) ul.appendChild(memberChip(m, room.host));
+    }
+    const btn = joinTeamButton(col.team, col.team === -1 ? 'Spectate' : `Join ${col.label}`);
+    btn.disabled = me ? me.team === col.team : false;
+    div.append(h, ul, btn);
+    els.teamsArea.appendChild(div);
+  }
 
   renderCharRow(me?.charId ?? 'classic');
 
@@ -265,13 +292,6 @@ function renderCharRow(selectedId: string): void {
     els.charRow.appendChild(card);
   }
 }
-
-document.querySelectorAll<HTMLButtonElement>('.join-team').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const team = Number(btn.dataset.team) as -1 | 0 | 1;
-    net.send({ t: 'team', team });
-  });
-});
 
 els.lobbyCode.addEventListener('click', async () => {
   if (!currentRoom) return;
@@ -387,6 +407,15 @@ net.on('room', (msg) => {
     gameView.start();
     input.enabled = true;
     els.btnStop.classList.toggle('hidden', msg.host !== myId);
+    // spectator quick-join buttons, one per team in this mode
+    els.hudSpectateBtns.innerHTML = '';
+    for (let i = 0; i < msg.settings.teams; i++) {
+      const b = joinTeamButton(i as TeamOrSpec, TEAMS[i].name);
+      b.style.background = TEAMS[i].color;
+      b.style.color = '#10141a';
+      b.style.fontWeight = '700';
+      els.hudSpectateBtns.appendChild(b);
+    }
   } else {
     gameView.stop();
     input.enabled = false;

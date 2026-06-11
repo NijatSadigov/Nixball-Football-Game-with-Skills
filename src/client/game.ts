@@ -1,4 +1,4 @@
-import { BALL, PLAYER, TICK_MS, TICK_RATE } from '../shared/constants';
+import { BALL, PLAYER, TEAMS, TICK_MS, TICK_RATE } from '../shared/constants';
 import { getCharacter } from '../shared/characters';
 import { emptyInput, integratePlayer, type InputState } from '../shared/physics';
 import type { RoomMember, RoomSettings, WireEvent, WireState } from '../shared/types';
@@ -8,8 +8,7 @@ import type { Sfx } from './sound';
 const INTERP_DELAY = 100; // render this many ms behind the newest server data
 
 export interface HudRefs {
-  scoreRed: HTMLElement;
-  scoreBlue: HTMLElement;
+  scores: HTMLElement;
   clock: HTMLElement;
   golden: HTMLElement;
   banner: HTMLElement;
@@ -27,7 +26,7 @@ interface TimedSnap {
 export class GameView {
   myId = 0;
   roster = new Map<number, RoomMember>();
-  settings: RoomSettings = { scoreLimit: 3, timeLimitMin: 5, maxPlayers: 8 };
+  settings: RoomSettings = { scoreLimit: 3, timeLimitMin: 5, maxPlayers: 8, teams: 2, hotball: false };
   localInput: InputState = emptyInput();
 
   private renderer: Renderer;
@@ -81,6 +80,7 @@ export class GameView {
   setRoster(members: RoomMember[], myId: number): void {
     this.myId = myId;
     this.roster = new Map(members.map((m) => [m.id, m]));
+    this.renderer.setMode(this.settings.teams, this.settings.hotball);
     const me = this.roster.get(myId);
     // spectator bar
     this.hud.spectate.classList.toggle('hidden', !me || me.team !== -1);
@@ -134,7 +134,8 @@ export class GameView {
         break;
       case 'goal': {
         this.effects.push({ kind: 'goalflash', x: 0, y: 0, t0: now });
-        this.setBanner('GOAL!', e.team === 0 ? 'var(--red)' : 'var(--blue)', 2200);
+        if (e.team >= 0) this.setBanner('GOAL!', TEAMS[e.team].color, 2200);
+        else this.setBanner('OWN GOAL!', 'white', 2200);
         this.sfx.goal();
         break;
       }
@@ -143,13 +144,8 @@ export class GameView {
         this.pred = null;
         break;
       case 'end': {
-        const text =
-          e.winner === -1
-            ? 'DRAW'
-            : e.winner === 0
-              ? 'RED WINS!'
-              : 'BLUE WINS!';
-        this.setBanner(text, e.winner === 0 ? 'var(--red)' : e.winner === 1 ? 'var(--blue)' : 'white', 0);
+        if (e.winner === -1) this.setBanner('DRAW', 'white', 0);
+        else this.setBanner(`${TEAMS[e.winner].name.toUpperCase()} WINS!`, TEAMS[e.winner].color, 0);
         this.sfx.whistle();
         break;
       }
@@ -293,8 +289,18 @@ export class GameView {
   private updateHud(world: ViewWorld): void {
     const s = this.latest;
     if (!s) return;
-    this.hud.scoreRed.textContent = String(s.s[0]);
-    this.hud.scoreBlue.textContent = String(s.s[1]);
+    if (this.hud.scores.childElementCount !== s.s.length) {
+      this.hud.scores.innerHTML = '';
+      for (let i = 0; i < s.s.length; i++) {
+        const span = document.createElement('span');
+        span.className = 'score';
+        span.style.color = TEAMS[i].color;
+        this.hud.scores.appendChild(span);
+      }
+    }
+    for (let i = 0; i < s.s.length; i++) {
+      (this.hud.scores.children[i] as HTMLElement).textContent = String(s.s[i]);
+    }
     this.hud.golden.classList.toggle('hidden', s.g !== 1);
 
     const limitTicks = this.settings.timeLimitMin * 60 * TICK_RATE;

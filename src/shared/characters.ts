@@ -121,7 +121,7 @@ export const CHARACTERS: CharacterDef[] = [
       desc: 'Your next kick also launches nearby opponents flying.',
       cooldown: 420,
       duration: UNTIL_USED,
-      magnitude: 5, // impulse applied to shoved players (px/tick)
+      magnitude: 7, // impulse applied to shoved players (px/tick)
     },
   },
   {
@@ -138,9 +138,9 @@ export const CHARACTERS: CharacterDef[] = [
     skill: {
       id: 'magnet',
       name: 'Magnet',
-      desc: 'For 1.5 s the ball is pulled toward you — up close it sticks until you kick.',
+      desc: 'For 1 s the ball is gently pulled toward you — up close it sticks until you kick.',
       cooldown: 600,
-      duration: 90,
+      duration: 60,
       magnitude: 130, // attraction radius in px
     },
   },

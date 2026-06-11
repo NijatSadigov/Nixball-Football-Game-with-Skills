@@ -10,6 +10,10 @@ football in the browser. No accounts, no downloads.
   snapshot interpolation + client-side prediction for a smooth feel.
 - **Rooms** — create public or private rooms with score limit, time limit, and max
   players. Join via the public list or an invite code/link (`https://yourhost/#CODE`).
+- **Game modes** — classic 2-team, or **3-team / 4-team** chaos with extra goals in
+  the top and bottom walls (goals credit the last team that touched the ball; own
+  goals credit nobody). Plus the **Hot ball** modifier: the ball fires itself off
+  any touch — no kick button needed.
 - **Characters with skills** (data-driven, easy to extend):
 
   | Character | Role        | Skill                                                              |
@@ -19,7 +23,7 @@ football in the browser. No accounts, no downloads.
   | Bolt      | Winger      | **Blink Dash** — instant burst of speed (featherweight)            |
   | Titan     | Anchor      | **Fortress** — doubles in size and becomes immovable for 1.5 s     |
   | Brawl     | Enforcer    | **Bodycheck** — next kick also launches nearby opponents           |
-  | Magno     | Keeper      | **Magnet** — pulls the ball in for 1.5 s; up close it sticks       |
+  | Magno     | Keeper      | **Magnet** — gently pulls the ball in for 1 s; up close it sticks  |
 
 - **Perfect Return** — the signature mechanic: when the ball is flying at you fast
   and you *press* the kick button just before contact (≤150 ms), the ball rockets

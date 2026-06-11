@@ -1,4 +1,4 @@
-import { BALL, FIELD } from '../shared/constants';
+import { BALL, FIELD, TEAMS } from '../shared/constants';
 import { getCharacter } from '../shared/characters';
 import type { RoomMember } from '../shared/types';
 
@@ -28,11 +28,6 @@ export interface Effect {
   color?: string;
 }
 
-const TEAM = [
-  { fill: '#d8554a', edge: '#511d18' },
-  { fill: '#5689e5', edge: '#1b3563' },
-];
-
 const LINE = 'rgba(240, 248, 240, 0.75)';
 
 export class Renderer {
@@ -42,10 +37,18 @@ export class Renderer {
   private h = 0;
   private dpr = 1;
   private scale = 1;
+  private teams = 2;
+  private hotball = false;
   shake = 0; // decaying screen-shake intensity in px
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
+  }
+
+  setMode(teams: number, hotball: boolean): void {
+    if (teams !== this.teams) this.fieldCache = null; // field layout changes
+    this.teams = teams;
+    this.hotball = hotball;
   }
 
   resize(): void {
@@ -77,6 +80,8 @@ export class Renderer {
     g.scale(this.dpr, this.dpr);
     const s = this.scale;
     const { halfW: hw, halfH: hh, goalHalf: gh, goalDepth: gd, postRadius: pr } = FIELD;
+    const topGoal = this.teams >= 3;
+    const bottomGoal = this.teams >= 4;
 
     // surroundings
     g.fillStyle = '#173a26';
@@ -90,40 +95,83 @@ export class Renderer {
       g.fillRect(this.sx(-hw + i * stripeW), this.sy(-hh), stripeW * s + 1, hh * 2 * s);
     }
 
-    // nets
-    for (const side of [-1, 1]) {
-      const x0 = side * hw;
-      const x1 = side * (hw + gd);
+    // each goal: net box, hatching, defender-colored goal line, posts
+    // goals: [team, net rect in world coords, mouth line p0->p1]
+    interface GoalDef {
+      team: number;
+      net: { x0: number; y0: number; x1: number; y1: number };
+      mouth: { x0: number; y0: number; x1: number; y1: number };
+      posts: { x: number; y: number }[];
+    }
+    const goals: GoalDef[] = [
+      {
+        team: 0,
+        net: { x0: -hw - gd, y0: -gh, x1: -hw, y1: gh },
+        mouth: { x0: -hw, y0: -gh, x1: -hw, y1: gh },
+        posts: [
+          { x: -hw, y: -gh },
+          { x: -hw, y: gh },
+        ],
+      },
+      {
+        team: 1,
+        net: { x0: hw, y0: -gh, x1: hw + gd, y1: gh },
+        mouth: { x0: hw, y0: -gh, x1: hw, y1: gh },
+        posts: [
+          { x: hw, y: -gh },
+          { x: hw, y: gh },
+        ],
+      },
+    ];
+    if (topGoal) {
+      goals.push({
+        team: 2,
+        net: { x0: -gh, y0: -hh - gd, x1: gh, y1: -hh },
+        mouth: { x0: -gh, y0: -hh, x1: gh, y1: -hh },
+        posts: [
+          { x: -gh, y: -hh },
+          { x: gh, y: -hh },
+        ],
+      });
+    }
+    if (bottomGoal) {
+      goals.push({
+        team: 3,
+        net: { x0: -gh, y0: hh, x1: gh, y1: hh + gd },
+        mouth: { x0: -gh, y0: hh, x1: gh, y1: hh },
+        posts: [
+          { x: -gh, y: hh },
+          { x: gh, y: hh },
+        ],
+      });
+    }
+
+    const step = 11;
+    for (const goal of goals) {
+      const px0 = this.sx(goal.net.x0);
+      const py0 = this.sy(goal.net.y0);
+      const pw = (goal.net.x1 - goal.net.x0) * s;
+      const ph = (goal.net.y1 - goal.net.y0) * s;
       g.fillStyle = 'rgba(10, 25, 16, 0.55)';
-      g.fillRect(
-        Math.min(this.sx(x0), this.sx(x1)),
-        this.sy(-gh),
-        Math.abs(this.sx(x1) - this.sx(x0)),
-        gh * 2 * s,
-      );
+      g.fillRect(px0, py0, pw, ph);
+      // hatching
       g.strokeStyle = 'rgba(220, 235, 225, 0.25)';
       g.lineWidth = 1;
-      const step = 11;
-      for (let yy = -gh; yy <= gh; yy += step) {
+      for (let xx = goal.net.x0; xx <= goal.net.x1; xx += step) {
         g.beginPath();
-        g.moveTo(this.sx(x0), this.sy(yy));
-        g.lineTo(this.sx(x1), this.sy(yy));
+        g.moveTo(this.sx(xx), py0);
+        g.lineTo(this.sx(xx), py0 + ph);
         g.stroke();
       }
-      for (let k = 0; k <= gd; k += step) {
+      for (let yy = goal.net.y0; yy <= goal.net.y1; yy += step) {
         g.beginPath();
-        g.moveTo(this.sx(side * (hw + k)), this.sy(-gh));
-        g.lineTo(this.sx(side * (hw + k)), this.sy(gh));
+        g.moveTo(px0, this.sy(yy));
+        g.lineTo(px0 + pw, this.sy(yy));
         g.stroke();
       }
       g.strokeStyle = 'rgba(220, 235, 225, 0.5)';
       g.lineWidth = 2;
-      g.strokeRect(
-        Math.min(this.sx(x0), this.sx(x1)),
-        this.sy(-gh),
-        Math.abs(this.sx(x1) - this.sx(x0)),
-        gh * 2 * s,
-      );
+      g.strokeRect(px0, py0, pw, ph);
     }
 
     // pitch lines
@@ -142,7 +190,7 @@ export class Renderer {
     g.fillStyle = LINE;
     g.fill();
 
-    // penalty areas (cosmetic)
+    // penalty areas (cosmetic, left/right only)
     for (const side of [-1, 1]) {
       const bx = side * hw;
       const w = 110 * s * side;
@@ -151,11 +199,19 @@ export class Renderer {
       g.strokeRect(Math.min(this.sx(bx), this.sx(bx) + w), this.sy(-150), Math.abs(w), 300 * s);
     }
 
-    // posts
-    for (const side of [-1, 1]) {
-      for (const yy of [-gh, gh]) {
+    // defender-colored goal lines + posts (drawn over the border)
+    for (const goal of goals) {
+      g.strokeStyle = TEAMS[goal.team].color;
+      g.globalAlpha = 0.85;
+      g.lineWidth = 4;
+      g.beginPath();
+      g.moveTo(this.sx(goal.mouth.x0), this.sy(goal.mouth.y0));
+      g.lineTo(this.sx(goal.mouth.x1), this.sy(goal.mouth.y1));
+      g.stroke();
+      g.globalAlpha = 1;
+      for (const post of goal.posts) {
         g.beginPath();
-        g.arc(this.sx(side * hw), this.sy(yy), pr * s, 0, Math.PI * 2);
+        g.arc(this.sx(post.x), this.sy(post.y), pr * s, 0, Math.PI * 2);
         g.fillStyle = '#f2f6f2';
         g.fill();
         g.strokeStyle = '#222';
@@ -194,7 +250,7 @@ export class Renderer {
     // players
     for (const p of world.players) {
       const member = roster.get(p.id);
-      const team = member?.team === 1 ? 1 : 0;
+      const team = member && member.team >= 0 && member.team <= 3 ? member.team : 0;
       const char = getCharacter(member?.charId ?? 'classic');
       const skillOn = (p.flags & 2) !== 0;
       // Fortress doubles the disc while active
@@ -229,10 +285,10 @@ export class Renderer {
       // disc
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = TEAM[team].fill;
+      ctx.fillStyle = TEAMS[team].color;
       ctx.fill();
       ctx.lineWidth = 2.5;
-      ctx.strokeStyle = TEAM[team].edge;
+      ctx.strokeStyle = TEAMS[team].edge;
       ctx.stroke();
 
       // character accent ring
@@ -280,12 +336,22 @@ export class Renderer {
       ctx.arc(x + 2, y + 3, r, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.fill();
+      if (this.hotball) {
+        // hot ball: pulsing fiery aura
+        ctx.beginPath();
+        ctx.arc(x, y, r + 4 + Math.sin(now / 110) * 2, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ff7b2d';
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = '#f5f5f5';
+      ctx.fillStyle = this.hotball ? '#ffe1c4' : '#f5f5f5';
       ctx.fill();
       ctx.lineWidth = 1.8;
-      ctx.strokeStyle = '#1c1c1c';
+      ctx.strokeStyle = this.hotball ? '#a3420e' : '#1c1c1c';
       ctx.stroke();
     }
 

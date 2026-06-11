@@ -93,7 +93,8 @@ button.big {
   font-size: 17px;
 }
 
-input {
+input,
+select {
   font: inherit;
   color: var(--text);
   background: var(--bg-2);
@@ -103,7 +104,8 @@ input {
   outline: none;
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--accent);
 }
 
@@ -233,6 +235,11 @@ input:focus {
 .badge.live {
   background: #3b2710;
   color: var(--gold);
+}
+
+.badge.hot {
+  background: #3b1d10;
+  color: #ff7b2d;
 }
 
 .hint {
@@ -519,12 +526,9 @@ input:focus {
   font-weight: 800;
 }
 
-#hud-top .score.red {
-  color: var(--red);
-}
-
-#hud-top .score.blue {
-  color: var(--blue);
+#hud-scores {
+  display: flex;
+  gap: 16px;
 }
 
 #hud-clock {
@@ -673,14 +677,9 @@ input:focus {
   padding: 8px 14px;
 }
 
-#hud-spectate .red-btn {
-  background: var(--red);
-  font-weight: 700;
-}
-
-#hud-spectate .blue-btn {
-  background: var(--blue);
-  font-weight: 700;
+#hud-spectate-btns {
+  display: flex;
+  gap: 8px;
 }
 
 #hud-buttons {

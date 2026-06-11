@@ -1,5 +1,9 @@
 // Authoritative match simulation. Pure data + step function so the server can
 // run it and the client can reuse pieces (movement integration) for prediction.
+//
+// Teams & goals: team 0 defends the LEFT goal, team 1 the RIGHT. In 3-team
+// mode team 2 defends a goal in the TOP wall; in 4-team mode team 3 defends
+// the BOTTOM wall. Goals are credited to the last team that touched the ball.
 
 import { BALL, FIELD, KICKOFF_PAUSE_TICKS, PERFECT, PLAYER } from './constants';
 import { getCharacter } from './characters';
@@ -25,7 +29,7 @@ export interface Disc {
 
 export interface SimPlayer extends Disc {
   id: number;
-  team: 0 | 1;
+  team: number; // 0..3
   charId: string;
   input: InputState;
   kickPressTick: number; // tick of the most recent kick press (rising edge)
@@ -41,8 +45,8 @@ export type SimEvent =
   | { kind: 'perfect'; id: number; x: number; y: number; speed: number }
   | { kind: 'skill'; id: number; skill: string }
   | { kind: 'shove'; id: number; x: number; y: number }
-  | { kind: 'goal'; team: 0 | 1 }
-  | { kind: 'end'; winner: 0 | 1 | -1 }
+  | { kind: 'goal'; team: number } // scoring team; -1 = own goal, nobody credited
+  | { kind: 'end'; winner: number } // -1 = draw / stopped
   | { kind: 'kickoff' };
 
 export interface SimState {
@@ -51,7 +55,10 @@ export interface SimState {
   phaseUntil: number;
   clock: number; // elapsed play ticks (paused during goal pause)
   golden: boolean;
-  score: [number, number];
+  goldenWinner: number; // team that scored during golden goal, -1 = none yet
+  teams: number; // 2, 3 or 4
+  lastTouchTeam: number; // last team to touch the ball, -1 = nobody yet
+  score: number[]; // one entry per team
   ball: Disc;
   players: SimPlayer[];
 }
@@ -59,16 +66,23 @@ export interface SimState {
 export interface MatchConfig {
   scoreLimit: number;
   timeLimitTicks: number;
+  hotball?: boolean; // the ball fires itself off any touch
 }
 
-const POSTS = [
-  { x: -FIELD.halfW, y: -FIELD.goalHalf },
-  { x: -FIELD.halfW, y: FIELD.goalHalf },
-  { x: FIELD.halfW, y: -FIELD.goalHalf },
-  { x: FIELD.halfW, y: FIELD.goalHalf },
-];
+function postsFor(teams: number): { x: number; y: number }[] {
+  const { halfW: hw, halfH: hh, goalHalf: gw } = FIELD;
+  const posts = [
+    { x: -hw, y: -gw },
+    { x: -hw, y: gw },
+    { x: hw, y: -gw },
+    { x: hw, y: gw },
+  ];
+  if (teams >= 3) posts.push({ x: -gw, y: -hh }, { x: gw, y: -hh });
+  if (teams >= 4) posts.push({ x: -gw, y: hh }, { x: gw, y: hh });
+  return posts;
+}
 
-export function createPlayer(id: number, team: 0 | 1, charId: string): SimPlayer {
+export function createPlayer(id: number, team: number, charId: string): SimPlayer {
   return {
     id,
     team,
@@ -88,7 +102,8 @@ export function createPlayer(id: number, team: 0 | 1, charId: string): SimPlayer
 }
 
 export function createMatch(
-  roster: { id: number; team: 0 | 1; charId: string }[],
+  roster: { id: number; team: number; charId: string }[],
+  teams = 2,
 ): SimState {
   const state: SimState = {
     tick: 0,
@@ -96,7 +111,10 @@ export function createMatch(
     phaseUntil: 0,
     clock: 0,
     golden: false,
-    score: [0, 0],
+    goldenWinner: -1,
+    teams,
+    lastTouchTeam: -1,
+    score: new Array(teams).fill(0),
     ball: { x: 0, y: 0, vx: 0, vy: 0 },
     players: roster.map((r) => createPlayer(r.id, r.team, r.charId)),
   };
@@ -106,13 +124,26 @@ export function createMatch(
 
 export function placeKickoff(state: SimState): void {
   state.ball = { x: 0, y: 0, vx: 0, vy: 0 };
-  for (const team of [0, 1] as const) {
+  state.lastTouchTeam = -1;
+  for (let team = 0; team < state.teams; team++) {
     const list = state.players.filter((p) => p.team === team);
-    const side = team === 0 ? -1 : 1;
-    const spacing = Math.min(70, (FIELD.halfH * 2 - 60) / Math.max(1, list.length - 1));
+    const lateral = team < 2 ? FIELD.halfH : FIELD.halfW;
+    const spacing = Math.min(70, (lateral * 2 - 80) / Math.max(1, list.length - 1));
     list.forEach((p, i) => {
-      p.x = side * 170;
-      p.y = (i - (list.length - 1) / 2) * spacing;
+      const off = (i - (list.length - 1) / 2) * spacing;
+      if (team === 0) {
+        p.x = -170;
+        p.y = off;
+      } else if (team === 1) {
+        p.x = 170;
+        p.y = off;
+      } else if (team === 2) {
+        p.x = off;
+        p.y = -140;
+      } else {
+        p.x = off;
+        p.y = 140;
+      }
       p.vx = 0;
       p.vy = 0;
       p.kickCooldownUntil = state.tick + 10;
@@ -123,14 +154,25 @@ export function placeKickoff(state: SimState): void {
 export function addPlayerToSim(
   state: SimState,
   id: number,
-  team: 0 | 1,
+  team: number,
   charId: string,
 ): SimPlayer {
   const p = createPlayer(id, team, charId);
-  const side = team === 0 ? -1 : 1;
   const teammates = state.players.filter((q) => q.team === team).length;
-  p.x = side * (FIELD.halfW * 0.6);
-  p.y = ((teammates % 5) - 2) * 60;
+  const off = ((teammates % 5) - 2) * 60;
+  if (team === 0) {
+    p.x = -FIELD.halfW * 0.6;
+    p.y = off;
+  } else if (team === 1) {
+    p.x = FIELD.halfW * 0.6;
+    p.y = off;
+  } else if (team === 2) {
+    p.x = off;
+    p.y = -FIELD.halfH * 0.6;
+  } else {
+    p.x = off;
+    p.y = FIELD.halfH * 0.6;
+  }
   state.players.push(p);
   return p;
 }
@@ -162,12 +204,12 @@ function collide(
   ia: number,
   ib: number,
   e: number,
-): void {
+): boolean {
   let dx = b.x - a.x;
   let dy = b.y - a.y;
   let d = Math.hypot(dx, dy);
   const min = ra + rb;
-  if (d >= min) return;
+  if (d >= min) return false;
   if (d < 1e-6) {
     dx = 1;
     dy = 0;
@@ -176,7 +218,7 @@ function collide(
   const nx = dx / d;
   const ny = dy / d;
   const total = ia + ib;
-  if (total <= 0) return;
+  if (total <= 0) return false;
   const overlap = min - d;
   a.x -= nx * overlap * (ia / total);
   a.y -= ny * overlap * (ia / total);
@@ -190,6 +232,7 @@ function collide(
     b.vx += nx * j * ib;
     b.vy += ny * j * ib;
   }
+  return true;
 }
 
 // Collision against an immovable circle (goal posts).
@@ -215,29 +258,22 @@ function collideStatic(d: Disc, r: number, px: number, py: number, pr: number, e
   }
 }
 
-function ballWalls(b: Disc): void {
+function ballWalls(b: Disc, teams: number): void {
   const r = BALL.radius;
-  const { halfW: hw, halfH: hh, goalHalf: gh, goalDepth: gd } = FIELD;
+  const { halfW: hw, halfH: hh, goalHalf: gw, goalDepth: gd } = FIELD;
   const e = FIELD.wallRestitution;
   const en = FIELD.netRestitution;
-  if (Math.abs(b.x) <= hw) {
-    // top/bottom touchlines
-    if (b.y > hh - r) {
-      b.y = hh - r;
-      if (b.vy > 0) b.vy = -b.vy * e;
-    }
-    if (b.y < -hh + r) {
-      b.y = -hh + r;
-      if (b.vy < 0) b.vy = -b.vy * e;
-    }
-  } else {
-    // inside a goal: net side walls and back of the net
-    if (b.y > gh - r) {
-      b.y = gh - r;
+  const topGoal = teams >= 3;
+  const bottomGoal = teams >= 4;
+
+  if (Math.abs(b.x) > hw) {
+    // inside a left/right goal net
+    if (b.y > gw - r) {
+      b.y = gw - r;
       if (b.vy > 0) b.vy = -b.vy * en;
     }
-    if (b.y < -gh + r) {
-      b.y = -gh + r;
+    if (b.y < -gw + r) {
+      b.y = -gw + r;
       if (b.vy < 0) b.vy = -b.vy * en;
     }
     if (b.x > hw + gd - r) {
@@ -248,14 +284,51 @@ function ballWalls(b: Disc): void {
       b.x = -hw - gd + r;
       if (b.vx < 0) b.vx = -b.vx * en;
     }
-  }
-  // goal lines outside the mouth are solid walls
-  if (Math.abs(b.y) >= gh) {
-    if (b.x > hw - r && b.x <= hw + 4) {
+  } else if (b.y < -hh && topGoal) {
+    // inside the top goal net
+    if (b.x > gw - r) {
+      b.x = gw - r;
+      if (b.vx > 0) b.vx = -b.vx * en;
+    }
+    if (b.x < -gw + r) {
+      b.x = -gw + r;
+      if (b.vx < 0) b.vx = -b.vx * en;
+    }
+    if (b.y < -hh - gd + r) {
+      b.y = -hh - gd + r;
+      if (b.vy < 0) b.vy = -b.vy * en;
+    }
+  } else if (b.y > hh && bottomGoal) {
+    // inside the bottom goal net
+    if (b.x > gw - r) {
+      b.x = gw - r;
+      if (b.vx > 0) b.vx = -b.vx * en;
+    }
+    if (b.x < -gw + r) {
+      b.x = -gw + r;
+      if (b.vx < 0) b.vx = -b.vx * en;
+    }
+    if (b.y > hh + gd - r) {
+      b.y = hh + gd - r;
+      if (b.vy > 0) b.vy = -b.vy * en;
+    }
+  } else {
+    // main field: solid walls except open goal mouths
+    const inLRMouth = Math.abs(b.y) < gw;
+    const inTBMouth = Math.abs(b.x) < gw;
+    if (b.y > hh - r && !(bottomGoal && inTBMouth)) {
+      b.y = hh - r;
+      if (b.vy > 0) b.vy = -b.vy * e;
+    }
+    if (b.y < -hh + r && !(topGoal && inTBMouth)) {
+      b.y = -hh + r;
+      if (b.vy < 0) b.vy = -b.vy * e;
+    }
+    if (b.x > hw - r && !inLRMouth) {
       b.x = hw - r;
       if (b.vx > 0) b.vx = -b.vx * e;
     }
-    if (b.x < -hw + r && b.x >= -hw - 4) {
+    if (b.x < -hw + r && !inLRMouth) {
       b.x = -hw + r;
       if (b.vx < 0) b.vx = -b.vx * e;
     }
@@ -302,11 +375,27 @@ export function integratePlayer(p: Disc, input: InputState, charId: string, radi
   playerBounds(p, radius ?? c.radius);
 }
 
-function scoreGoal(state: SimState, team: 0 | 1, events: SimEvent[]): void {
-  state.score[team]++;
+// Goal against `conceding`. With 2 teams the other team scores; with 3+ teams
+// the last team to touch the ball scores (own goals credit nobody).
+function scoreGoal(state: SimState, conceding: number, events: SimEvent[]): void {
+  let scorer = -1;
+  if (state.teams === 2) {
+    scorer = conceding === 0 ? 1 : 0;
+  } else if (state.lastTouchTeam >= 0 && state.lastTouchTeam !== conceding) {
+    scorer = state.lastTouchTeam;
+  }
+  if (scorer >= 0) {
+    state.score[scorer]++;
+    if (state.golden) state.goldenWinner = scorer;
+  }
   state.phase = 1;
   state.phaseUntil = state.tick + KICKOFF_PAUSE_TICKS;
-  events.push({ kind: 'goal', team });
+  events.push({ kind: 'goal', team: scorer });
+}
+
+function leaders(score: number[]): number[] {
+  const max = Math.max(...score);
+  return score.reduce<number[]>((acc, s, i) => (s === max ? [...acc, i] : acc), []);
 }
 
 export function stepMatch(
@@ -334,8 +423,12 @@ export function stepMatch(
         if (sp > 0.1) {
           dx = p.vx / sp;
           dy = p.vy / sp;
+        } else if (p.team === 2) {
+          dy = 1; // default: away from your own goal
+        } else if (p.team === 3) {
+          dy = -1;
         } else {
-          dx = p.team === 0 ? 1 : -1; // default: toward the enemy goal
+          dx = p.team === 0 ? 1 : -1;
         }
       } else {
         const n = Math.hypot(dx, dy);
@@ -381,8 +474,9 @@ export function stepMatch(
       const ay = p.y + ny * (pr + BALL.radius + 1);
       b.x += (ax - b.x) * 0.35;
       b.y += (ay - b.y) * 0.35;
+      state.lastTouchTeam = p.team;
     } else {
-      const pull = 0.5 * (1 - d / radius) + 0.12;
+      const pull = 0.32 * (1 - d / radius) + 0.07;
       b.vx -= nx * pull;
       b.vy -= ny * pull;
     }
@@ -455,11 +549,32 @@ export function stepMatch(
       b.vy += ny * strength;
       events.push({ kind: 'kick', id: p.id });
     }
+    state.lastTouchTeam = p.team;
     p.kickConsumedTick = Math.max(p.kickPressTick, p.kickConsumedTick);
     p.kickCooldownUntil = t + PLAYER.kickCooldownTicks;
     if (powered) p.skillActiveUntil = 0; // power shot is spent on one kick
     // kicking a magnet-held ball releases it
     if (c.skill?.id === 'magnet' && t < p.skillActiveUntil) p.skillActiveUntil = 0;
+  }
+
+  // --- hot ball: the ball fires itself off any touch ---
+  if (cfg.hotball) {
+    for (const p of state.players) {
+      if (t < p.kickCooldownUntil) continue;
+      const pr = playerRadius(p, t);
+      const dx = b.x - p.x;
+      const dy = b.y - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d > pr + BALL.radius + 2) continue;
+      const nx = d > 1e-6 ? dx / d : 1;
+      const ny = d > 1e-6 ? dy / d : 0;
+      const c = getCharacter(p.charId);
+      b.vx = nx * c.kickStrength * 1.15 + p.vx * 0.3;
+      b.vy = ny * c.kickStrength * 1.15 + p.vy * 0.3;
+      p.kickCooldownUntil = t + PLAYER.kickCooldownTicks;
+      state.lastTouchTeam = p.team;
+      events.push({ kind: 'kick', id: p.id });
+    }
   }
 
   // --- collisions ---
@@ -479,46 +594,52 @@ export function stepMatch(
     }
   }
   for (const p of state.players) {
-    collide(p, b, playerRadius(p, t), BALL.radius, playerInvMass(p, t), BALL.invMass, 0.5);
+    const touched = collide(p, b, playerRadius(p, t), BALL.radius, playerInvMass(p, t), BALL.invMass, 0.5);
+    if (touched) state.lastTouchTeam = p.team;
   }
-  for (const post of POSTS) {
+  for (const post of postsFor(state.teams)) {
     collideStatic(b, BALL.radius, post.x, post.y, FIELD.postRadius, 0.5);
     for (const p of state.players) {
       collideStatic(p, playerRadius(p, t), post.x, post.y, FIELD.postRadius, 0.5);
     }
   }
-  ballWalls(b);
+  ballWalls(b, state.teams);
   for (const p of state.players) {
     playerBounds(p, playerRadius(p, t));
   }
 
   // --- goals ---
   if (state.phase === 0) {
-    if (Math.abs(b.y) < FIELD.goalHalf) {
-      if (b.x > FIELD.halfW + BALL.radius) scoreGoal(state, 0, events);
-      else if (b.x < -FIELD.halfW - BALL.radius) scoreGoal(state, 1, events);
-    }
+    const { halfW: hw, halfH: hh, goalHalf: gw } = FIELD;
+    let conceding = -1;
+    if (Math.abs(b.y) < gw && b.x > hw + BALL.radius) conceding = 1;
+    else if (Math.abs(b.y) < gw && b.x < -hw - BALL.radius) conceding = 0;
+    else if (state.teams >= 3 && Math.abs(b.x) < gw && b.y < -hh - BALL.radius) conceding = 2;
+    else if (state.teams >= 4 && Math.abs(b.x) < gw && b.y > hh + BALL.radius) conceding = 3;
+    if (conceding >= 0) scoreGoal(state, conceding, events);
   }
 
   // --- clock and phase transitions ---
   if (state.phase === 0) {
     state.clock++;
     if (!state.golden && cfg.timeLimitTicks > 0 && state.clock >= cfg.timeLimitTicks) {
-      if (state.score[0] !== state.score[1]) {
+      const lead = leaders(state.score);
+      if (lead.length === 1) {
         state.phase = 2;
-        events.push({ kind: 'end', winner: state.score[0] > state.score[1] ? 0 : 1 });
+        events.push({ kind: 'end', winner: lead[0] });
       } else {
-        state.golden = true; // sudden death: next goal wins
+        state.golden = true; // sudden death: next scored goal wins
       }
     }
   } else if (state.phase === 1 && t >= state.phaseUntil) {
-    const scoreReached =
-      cfg.scoreLimit > 0 &&
-      (state.score[0] >= cfg.scoreLimit || state.score[1] >= cfg.scoreLimit);
-    const goldenDecided = state.golden && state.score[0] !== state.score[1];
-    if (scoreReached || goldenDecided) {
+    const champion =
+      cfg.scoreLimit > 0 ? state.score.findIndex((s) => s >= cfg.scoreLimit) : -1;
+    if (champion >= 0) {
       state.phase = 2;
-      events.push({ kind: 'end', winner: state.score[0] > state.score[1] ? 0 : 1 });
+      events.push({ kind: 'end', winner: champion });
+    } else if (state.golden && state.goldenWinner >= 0) {
+      state.phase = 2;
+      events.push({ kind: 'end', winner: state.goldenWinner });
     } else {
       placeKickoff(state);
       state.phase = 0;

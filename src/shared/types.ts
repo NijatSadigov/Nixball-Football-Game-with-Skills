@@ -1,12 +1,15 @@
 import type { InputState } from './physics';
 
-export type Team = 0 | 1; // 0 = red (defends left goal), 1 = blue (defends right)
+// 0 = red (left goal), 1 = blue (right), 2 = green (top), 3 = gold (bottom)
+export type Team = 0 | 1 | 2 | 3;
 export type TeamOrSpec = Team | -1;
 
 export interface RoomSettings {
   scoreLimit: number; // 0 = unlimited
   timeLimitMin: number; // 0 = unlimited
   maxPlayers: number;
+  teams: number; // 2, 3 or 4
+  hotball: boolean; // ball fires itself off any touch
 }
 
 export interface RoomMember {
@@ -22,6 +25,8 @@ export interface RoomListing {
   players: number;
   max: number;
   phase: 'lobby' | 'match';
+  teams: number;
+  hotball: boolean;
 }
 
 // ---- client -> server ----
@@ -36,6 +41,8 @@ export type C2S =
       scoreLimit: number;
       timeLimitMin: number;
       maxPlayers: number;
+      teams: number;
+      hotball: boolean;
     }
   | { t: 'join'; code: string }
   | { t: 'leave' }
@@ -59,7 +66,7 @@ export interface WireState {
   ph: 0 | 1 | 2; // 0 play, 1 goal pause, 2 match over
   b: [number, number, number, number]; // ball x, y, vx, vy
   p: WirePlayer[];
-  s: [number, number]; // score red, blue
+  s: number[]; // score per team
   c: number; // elapsed play ticks
   g: 0 | 1; // golden goal active
 }
@@ -69,8 +76,8 @@ export type WireEvent =
   | { t: 'ev'; e: 'perfect'; id: number; x: number; y: number; speed: number }
   | { t: 'ev'; e: 'skill'; id: number; skill: string }
   | { t: 'ev'; e: 'shove'; id: number; x: number; y: number }
-  | { t: 'ev'; e: 'goal'; team: Team }
-  | { t: 'ev'; e: 'end'; winner: Team | -1 }
+  | { t: 'ev'; e: 'goal'; team: number } // -1 = own goal, nobody credited
+  | { t: 'ev'; e: 'end'; winner: number } // -1 = draw / stopped
   | { t: 'ev'; e: 'kickoff' };
 
 export interface RoomStateMsg {

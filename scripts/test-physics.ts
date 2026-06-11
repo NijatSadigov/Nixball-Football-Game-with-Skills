@@ -167,4 +167,73 @@ const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
   assert.ok(d < 32, `ball pulled in and held (d=${d.toFixed(1)})`);
 }
 
+// --- 11. 3-team mode: goal in the top net credits the last toucher ---
+{
+  const s = createMatch(
+    [
+      { id: 1, team: 0, charId: 'classic' },
+      { id: 2, team: 1, charId: 'classic' },
+      { id: 3, team: 2, charId: 'classic' },
+    ],
+    3,
+  );
+  s.players.forEach((p, i) => {
+    p.x = -300 + i * 60; // clear everyone out of the shot path
+    p.y = 150;
+  });
+  s.lastTouchTeam = 0; // red touched it last
+  s.ball.x = 0;
+  s.ball.y = -FIELD.halfH + 15;
+  s.ball.vx = 0;
+  s.ball.vy = -6;
+  let goal: { kind: string; team?: number } | undefined;
+  for (let i = 0; i < 30 && !goal; i++) {
+    goal = stepMatch(s, cfg, noJitter).find((e) => e.kind === 'goal');
+  }
+  assert.ok(goal, 'ball passes through the open top mouth and scores');
+  assert.equal((goal as { team: number }).team, 0, 'credited to the last toucher (red)');
+  assert.deepEqual(s.score, [1, 0, 0]);
+}
+
+// --- 12. 3-team mode: own goal credits nobody ---
+{
+  const s = createMatch(
+    [
+      { id: 1, team: 0, charId: 'classic' },
+      { id: 2, team: 2, charId: 'classic' },
+    ],
+    3,
+  );
+  s.players.forEach((p, i) => {
+    p.x = -300 + i * 60;
+    p.y = 150;
+  });
+  s.lastTouchTeam = 2; // green knocked it into their own net
+  s.ball.x = 0;
+  s.ball.y = -FIELD.halfH + 15;
+  s.ball.vy = -6;
+  let goal: { kind: string; team?: number } | undefined;
+  for (let i = 0; i < 30 && !goal; i++) {
+    goal = stepMatch(s, cfg, noJitter).find((e) => e.kind === 'goal');
+  }
+  assert.ok(goal, 'own goal still resets play');
+  assert.equal((goal as { team: number }).team, -1, 'nobody credited');
+  assert.deepEqual(s.score, [0, 0, 0]);
+}
+
+// --- 13. hot ball fires off any touch, no kick needed ---
+{
+  const s = createMatch([{ id: 1, team: 0, charId: 'classic' }]);
+  const p = s.players[0];
+  p.x = 0;
+  p.y = 0;
+  p.kickCooldownUntil = 0;
+  s.ball.x = 26;
+  s.ball.y = 0;
+  s.ball.vx = -1;
+  const events = stepMatch(s, { ...cfg, hotball: true }, noJitter);
+  assert.ok(events.some((e) => e.kind === 'kick'), 'auto-fire emits a kick event');
+  assert.ok(s.ball.vx > 3, `ball fired away on touch (vx=${s.ball.vx.toFixed(2)})`);
+}
+
 console.log('physics tests: all OK');

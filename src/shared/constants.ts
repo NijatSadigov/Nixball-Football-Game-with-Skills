@@ -1,6 +1,15 @@
 // All physics units are pixels and pixels-per-tick at a fixed 60 Hz simulation.
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
+
+// Team palette. Index = team id; rooms use the first N depending on the mode.
+// Teams 0/1 defend the left/right goals; team 2 the top goal; team 3 the bottom.
+export const TEAMS = [
+  { name: 'Red', color: '#e25d51', edge: '#511d18' },
+  { name: 'Blue', color: '#5689e5', edge: '#1b3563' },
+  { name: 'Green', color: '#43c46b', edge: '#17532b' },
+  { name: 'Gold', color: '#e3c43d', edge: '#65561a' },
+];
 
 export const TICK_RATE = 60;
 export const TICK_MS = 1000 / TICK_RATE;
