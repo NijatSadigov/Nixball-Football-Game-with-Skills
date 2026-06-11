@@ -2,7 +2,8 @@
 
 import assert from 'node:assert';
 import { FIELD, PERFECT } from '../src/shared/constants';
-import { createMatch, stepMatch, type MatchConfig } from '../src/shared/physics';
+import { getCharacter } from '../src/shared/characters';
+import { createMatch, playerRadius, stepMatch, type MatchConfig } from '../src/shared/physics';
 
 const cfg: MatchConfig = { scoreLimit: 3, timeLimitTicks: 0 };
 const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
@@ -113,6 +114,57 @@ const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
   }
   assert.ok(ended, 'match ends once the score limit is reached');
   assert.equal(s.phase, 2);
+}
+
+// --- 8. fortress doubles the radius while active ---
+{
+  const s = createMatch([{ id: 1, team: 0, charId: 'titan' }]);
+  const p = s.players[0];
+  const base = getCharacter('titan').radius;
+  assert.equal(playerRadius(p, s.tick), base);
+  p.pendingSkill = true;
+  stepMatch(s, cfg, noJitter);
+  assert.equal(playerRadius(p, s.tick), base * 2, 'fortress doubles the disc');
+}
+
+// --- 9. bodycheck launches a nearby opponent on the next kick ---
+{
+  const s = createMatch([
+    { id: 1, team: 0, charId: 'brawl' },
+    { id: 2, team: 1, charId: 'classic' },
+  ]);
+  const [p, q] = s.players;
+  p.x = 0;
+  p.y = 0;
+  q.x = 34;
+  q.y = 0;
+  q.vx = 0;
+  s.ball.x = -300;
+  s.ball.y = -150; // out of the way
+  p.pendingSkill = true;
+  stepMatch(s, cfg, noJitter); // arms the shove
+  p.kickCooldownUntil = 0;
+  p.input.kick = true;
+  p.kickPressTick = s.tick;
+  const events = stepMatch(s, cfg, noJitter);
+  assert.ok(events.some((e) => e.kind === 'shove'), 'shove event fires');
+  assert.ok(q.vx > 3, `opponent launched away (vx=${q.vx.toFixed(2)})`);
+  assert.ok(s.players[0].skillActiveUntil === 0, 'bodycheck is consumed');
+}
+
+// --- 10. magnet pulls the ball in and holds it ---
+{
+  const s = createMatch([{ id: 1, team: 0, charId: 'magno' }]);
+  const p = s.players[0];
+  p.x = 0;
+  p.y = 0;
+  s.ball.x = 80;
+  s.ball.y = 0;
+  s.ball.vx = 0;
+  p.pendingSkill = true;
+  for (let i = 0; i < 45; i++) stepMatch(s, cfg, noJitter);
+  const d = Math.hypot(s.ball.x - p.x, s.ball.y - p.y);
+  assert.ok(d < 32, `ball pulled in and held (d=${d.toFixed(1)})`);
 }
 
 console.log('physics tests: all OK');

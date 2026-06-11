@@ -64,4 +64,8 @@ export class Sfx {
   skill(): void {
     this.tone(300, 0.12, { type: 'sawtooth', gain: 0.07, slideTo: 700 });
   }
+
+  shove(): void {
+    this.tone(110, 0.12, { type: 'triangle', gain: 0.24, slideTo: 55 });
+  }
 }

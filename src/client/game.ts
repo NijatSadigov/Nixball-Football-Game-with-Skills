@@ -1,4 +1,4 @@
-import { TICK_MS, TICK_RATE } from '../shared/constants';
+import { BALL, PLAYER, TICK_MS, TICK_RATE } from '../shared/constants';
 import { getCharacter } from '../shared/characters';
 import { emptyInput, integratePlayer, type InputState } from '../shared/physics';
 import type { RoomMember, RoomSettings, WireEvent, WireState } from '../shared/types';
@@ -127,6 +127,11 @@ export class GameView {
         this.sfx.skill();
         break;
       }
+      case 'shove':
+        this.effects.push({ kind: 'burst', x: e.x, y: e.y, t0: now, color: '#ff5d7e' });
+        this.renderer.shake = 4;
+        this.sfx.shove();
+        break;
       case 'goal': {
         this.effects.push({ kind: 'goalflash', x: 0, y: 0, t0: now });
         this.setBanner('GOAL!', e.team === 0 ? 'var(--red)' : 'var(--blue)', 2200);
@@ -263,8 +268,23 @@ export class GameView {
       this.pred = null;
     }
 
+    // Power Shot aim helper: when my skill is armed and I'm on the ball, show
+    // where a kick right now would send it.
+    let aim: { x: number; y: number; dx: number; dy: number } | null = null;
+    if (me && (me.flags & 2) !== 0) {
+      const char = getCharacter(this.roster.get(this.myId)?.charId ?? 'classic');
+      if (char.skill?.id === 'powershot') {
+        const adx = world.ball.x - me.x;
+        const ady = world.ball.y - me.y;
+        const ad = Math.hypot(adx, ady);
+        if (ad > 1e-6 && ad <= char.radius + BALL.radius + PLAYER.kickRange + 14) {
+          aim = { x: world.ball.x, y: world.ball.y, dx: adx / ad, dy: ady / ad };
+        }
+      }
+    }
+
     this.effects = this.effects.filter((ef) => now - ef.t0 < 1600);
-    this.renderer.draw(world, this.roster, this.myId, this.localInput.kick, this.effects, now);
+    this.renderer.draw(world, this.roster, this.myId, this.localInput.kick, this.effects, now, aim);
     this.updateHud(world);
 
     this.raf = requestAnimationFrame(this.frame);

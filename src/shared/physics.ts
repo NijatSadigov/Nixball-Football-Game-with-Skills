@@ -40,6 +40,7 @@ export type SimEvent =
   | { kind: 'kick'; id: number }
   | { kind: 'perfect'; id: number; x: number; y: number; speed: number }
   | { kind: 'skill'; id: number; skill: string }
+  | { kind: 'shove'; id: number; x: number; y: number }
   | { kind: 'goal'; team: 0 | 1 }
   | { kind: 'end'; winner: 0 | 1 | -1 }
   | { kind: 'kickoff' };
@@ -143,6 +144,13 @@ function playerInvMass(p: SimPlayer, tick: number): number {
   const c = getCharacter(p.charId);
   if (c.skill?.id === 'fortress' && tick < p.skillActiveUntil) return c.skill.magnitude;
   return c.invMass;
+}
+
+// Fortress also doubles the disc while active.
+export function playerRadius(p: SimPlayer, tick: number): number {
+  const c = getCharacter(p.charId);
+  if (c.skill?.id === 'fortress' && tick < p.skillActiveUntil) return c.radius * 2;
+  return c.radius;
 }
 
 // Impulse + positional correction between two dynamic discs.
@@ -277,7 +285,7 @@ function playerBounds(p: Disc, r: number): void {
 
 // Movement integration for one player. Also used by the client to predict its
 // own disc (collisions are ignored there; the server stays authoritative).
-export function integratePlayer(p: Disc, input: InputState, charId: string): void {
+export function integratePlayer(p: Disc, input: InputState, charId: string, radius?: number): void {
   const c = getCharacter(charId);
   let ax = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   let ay = (input.down ? 1 : 0) - (input.up ? 1 : 0);
@@ -291,7 +299,7 @@ export function integratePlayer(p: Disc, input: InputState, charId: string): voi
   p.vy = (p.vy + ay * a) * PLAYER.damping;
   p.x += p.vx;
   p.y += p.vy;
-  playerBounds(p, c.radius);
+  playerBounds(p, radius ?? c.radius);
 }
 
 function scoreGoal(state: SimState, team: 0 | 1, events: SimEvent[]): void {
@@ -344,7 +352,7 @@ export function stepMatch(
 
   // --- movement ---
   for (const p of state.players) {
-    integratePlayer(p, p.input, p.charId);
+    integratePlayer(p, p.input, p.charId, playerRadius(p, t));
   }
 
   // --- ball ---
@@ -353,6 +361,33 @@ export function stepMatch(
   b.x += b.vx;
   b.y += b.vy;
 
+  // --- magnet: attract the ball, hold it when close ---
+  for (const p of state.players) {
+    const c = getCharacter(p.charId);
+    if (c.skill?.id !== 'magnet' || t >= p.skillActiveUntil) continue;
+    const pr = playerRadius(p, t);
+    const dx = b.x - p.x;
+    const dy = b.y - p.y;
+    const d = Math.hypot(dx, dy);
+    const radius = c.skill.magnitude;
+    if (d > radius || d < 1e-6) continue;
+    const nx = dx / d;
+    const ny = dy / d;
+    if (d <= pr + BALL.radius + 8) {
+      // held: the ball travels with the player, parked just outside the disc
+      b.vx = p.vx;
+      b.vy = p.vy;
+      const ax = p.x + nx * (pr + BALL.radius + 1);
+      const ay = p.y + ny * (pr + BALL.radius + 1);
+      b.x += (ax - b.x) * 0.35;
+      b.y += (ay - b.y) * 0.35;
+    } else {
+      const pull = 0.5 * (1 - d / radius) + 0.12;
+      b.vx -= nx * pull;
+      b.vy -= ny * pull;
+    }
+  }
+
   // --- kicks ---
   // Resolved BEFORE ball-player collisions so the perfect-return check sees
   // the ball's true approach speed; otherwise the body bounce on the contact
@@ -360,10 +395,40 @@ export function stepMatch(
   for (const p of state.players) {
     if (!p.input.kick || t < p.kickCooldownUntil) continue;
     const c = getCharacter(p.charId);
+    const pr = playerRadius(p, t);
     const dx = b.x - p.x;
     const dy = b.y - p.y;
     const d = Math.hypot(dx, dy);
-    if (d > c.radius + BALL.radius + PLAYER.kickRange) continue;
+    const ballInRange = d <= pr + BALL.radius + PLAYER.kickRange;
+
+    // Bodycheck: an armed shove launches nearby opponents on the kick.
+    let shoved = false;
+    if (c.skill?.id === 'shove' && t < p.skillActiveUntil) {
+      for (const q of state.players) {
+        if (q.team === p.team) continue;
+        const qx = q.x - p.x;
+        const qy = q.y - p.y;
+        const qd = Math.hypot(qx, qy);
+        if (qd > pr + playerRadius(q, t) + PLAYER.kickRange + 8) continue;
+        const nqx = qd > 1e-6 ? qx / qd : 1;
+        const nqy = qd > 1e-6 ? qy / qd : 0;
+        q.vx += nqx * c.skill.magnitude;
+        q.vy += nqy * c.skill.magnitude;
+        shoved = true;
+      }
+      if (shoved) {
+        p.skillActiveUntil = 0; // bodycheck is spent
+        events.push({ kind: 'shove', id: p.id, x: p.x, y: p.y });
+      }
+    }
+
+    if (!ballInRange) {
+      if (shoved) {
+        p.kickConsumedTick = Math.max(p.kickPressTick, p.kickConsumedTick);
+        p.kickCooldownUntil = t + PLAYER.kickCooldownTicks;
+      }
+      continue;
+    }
     const nx = d > 1e-6 ? dx / d : p.team === 0 ? 1 : -1;
     const ny = d > 1e-6 ? dy / d : 0;
 
@@ -393,6 +458,8 @@ export function stepMatch(
     p.kickConsumedTick = Math.max(p.kickPressTick, p.kickConsumedTick);
     p.kickCooldownUntil = t + PLAYER.kickCooldownTicks;
     if (powered) p.skillActiveUntil = 0; // power shot is spent on one kick
+    // kicking a magnet-held ball releases it
+    if (c.skill?.id === 'magnet' && t < p.skillActiveUntil) p.skillActiveUntil = 0;
   }
 
   // --- collisions ---
@@ -403,8 +470,8 @@ export function stepMatch(
       collide(
         a,
         q,
-        getCharacter(a.charId).radius,
-        getCharacter(q.charId).radius,
+        playerRadius(a, t),
+        playerRadius(q, t),
         playerInvMass(a, t),
         playerInvMass(q, t),
         PLAYER.restitution,
@@ -412,17 +479,17 @@ export function stepMatch(
     }
   }
   for (const p of state.players) {
-    collide(p, b, getCharacter(p.charId).radius, BALL.radius, playerInvMass(p, t), BALL.invMass, 0.5);
+    collide(p, b, playerRadius(p, t), BALL.radius, playerInvMass(p, t), BALL.invMass, 0.5);
   }
   for (const post of POSTS) {
     collideStatic(b, BALL.radius, post.x, post.y, FIELD.postRadius, 0.5);
     for (const p of state.players) {
-      collideStatic(p, getCharacter(p.charId).radius, post.x, post.y, FIELD.postRadius, 0.5);
+      collideStatic(p, playerRadius(p, t), post.x, post.y, FIELD.postRadius, 0.5);
     }
   }
   ballWalls(b);
   for (const p of state.players) {
-    playerBounds(p, getCharacter(p.charId).radius);
+    playerBounds(p, playerRadius(p, t));
   }
 
   // --- goals ---

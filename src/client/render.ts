@@ -174,6 +174,7 @@ export class Renderer {
     localKick: boolean,
     effects: Effect[],
     now: number,
+    aim: { x: number; y: number; dx: number; dy: number } | null = null,
   ): void {
     const ctx = this.ctx;
     const s = this.scale;
@@ -195,9 +196,24 @@ export class Renderer {
       const member = roster.get(p.id);
       const team = member?.team === 1 ? 1 : 0;
       const char = getCharacter(member?.charId ?? 'classic');
-      const r = char.radius * s;
+      const skillOn = (p.flags & 2) !== 0;
+      // Fortress doubles the disc while active
+      const r = char.radius * (skillOn && char.skill?.id === 'fortress' ? 2 : 1) * s;
       const x = this.sx(p.x);
       const y = this.sy(p.y);
+
+      // magnet attraction radius
+      if (skillOn && char.skill?.id === 'magnet') {
+        ctx.beginPath();
+        ctx.arc(x, y, char.skill.magnitude * s, 0, Math.PI * 2);
+        ctx.strokeStyle = char.color;
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 6]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
 
       // skill aura
       if (p.flags & 2) {
@@ -271,6 +287,32 @@ export class Renderer {
       ctx.lineWidth = 1.8;
       ctx.strokeStyle = '#1c1c1c';
       ctx.stroke();
+    }
+
+    // aim arrow (Power Shot armed + on the ball): where the kick will send it
+    if (aim) {
+      const x0 = this.sx(aim.x);
+      const y0 = this.sy(aim.y);
+      const len = 48 * s;
+      const x1 = x0 + aim.dx * len;
+      const y1 = y0 + aim.dy * len;
+      ctx.strokeStyle = '#ffe44d';
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(x0 + aim.dx * 14 * s, y0 + aim.dy * 14 * s);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+      // arrowhead
+      const ang = Math.atan2(aim.dy, aim.dx);
+      const hs = 9 * s;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x1 - Math.cos(ang - 0.45) * hs, y1 - Math.sin(ang - 0.45) * hs);
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x1 - Math.cos(ang + 0.45) * hs, y1 - Math.sin(ang + 0.45) * hs);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
 
     // effects

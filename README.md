@@ -12,12 +12,14 @@ football in the browser. No accounts, no downloads.
   players. Join via the public list or an invite code/link (`https://yourhost/#CODE`).
 - **Characters with skills** (data-driven, easy to extend):
 
-  | Character | Role        | Skill                                        |
-  | --------- | ----------- | -------------------------------------------- |
-  | Classic   | All-rounder | None — pure football                         |
-  | Blaze     | Striker     | **Power Shot** — next kick within 2 s is 70% harder |
-  | Bolt      | Winger      | **Blink Dash** — instant burst of speed      |
-  | Titan     | Anchor      | **Fortress** — nearly immovable for 1.5 s    |
+  | Character | Role        | Skill                                                              |
+  | --------- | ----------- | ------------------------------------------------------------------ |
+  | Classic   | All-rounder | None — pure football                                               |
+  | Blaze     | Striker     | **Power Shot** — next kick is 70% harder, with an aim arrow        |
+  | Bolt      | Winger      | **Blink Dash** — instant burst of speed (featherweight)            |
+  | Titan     | Anchor      | **Fortress** — doubles in size and becomes immovable for 1.5 s     |
+  | Brawl     | Enforcer    | **Bodycheck** — next kick also launches nearby opponents           |
+  | Magno     | Keeper      | **Magnet** — pulls the ball in for 1.5 s; up close it sticks       |
 
 - **Perfect Return** — the signature mechanic: when the ball is flying at you fast
   and you *press* the kick button just before contact (≤150 ms), the ball rockets

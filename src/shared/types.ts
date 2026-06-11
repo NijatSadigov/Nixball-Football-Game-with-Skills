@@ -68,6 +68,7 @@ export type WireEvent =
   | { t: 'ev'; e: 'kick'; id: number }
   | { t: 'ev'; e: 'perfect'; id: number; x: number; y: number; speed: number }
   | { t: 'ev'; e: 'skill'; id: number; skill: string }
+  | { t: 'ev'; e: 'shove'; id: number; x: number; y: number }
   | { t: 'ev'; e: 'goal'; team: Team }
   | { t: 'ev'; e: 'end'; winner: Team | -1 }
   | { t: 'ev'; e: 'kickoff' };

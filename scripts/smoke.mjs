@@ -24,7 +24,8 @@ function connect(name) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
     const bot = { ws, name, room: null, states: 0, events: [], waiters: [] };
-    ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', v: 1, name })));
+    // keep in sync with PROTOCOL_VERSION in src/shared/constants.ts
+    ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', v: 2, name })));
     ws.on('message', (data) => {
       const m = JSON.parse(data.toString());
       if (m.t === 'welcome') resolve(bot);

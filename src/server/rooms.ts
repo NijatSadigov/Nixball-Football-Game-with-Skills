@@ -198,6 +198,8 @@ class Room {
         return { t: 'ev', e: 'perfect', id: ev.id, x: r2(ev.x), y: r2(ev.y), speed: r2(ev.speed) };
       case 'skill':
         return { t: 'ev', e: 'skill', id: ev.id, skill: ev.skill };
+      case 'shove':
+        return { t: 'ev', e: 'shove', id: ev.id, x: r2(ev.x), y: r2(ev.y) };
       case 'goal':
         return { t: 'ev', e: 'goal', team: ev.team };
       case 'end':

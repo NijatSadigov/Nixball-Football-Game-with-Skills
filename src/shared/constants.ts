@@ -1,6 +1,6 @@
 // All physics units are pixels and pixels-per-tick at a fixed 60 Hz simulation.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const TICK_RATE = 60;
 export const TICK_MS = 1000 / TICK_RATE;
