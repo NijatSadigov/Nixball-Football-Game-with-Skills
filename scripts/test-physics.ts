@@ -1,9 +1,16 @@
 ﻿// Quick sanity checks for the shared physics. Run with: npm test
 
 import assert from 'node:assert';
-import { FIELD, PERFECT } from '../src/shared/constants';
+import { FIELD, KICKOFF_BARRIER, PERFECT } from '../src/shared/constants';
 import { getCharacter } from '../src/shared/characters';
-import { createMatch, playerRadius, stepMatch, type MatchConfig } from '../src/shared/physics';
+import {
+  createMatch,
+  getGeometry,
+  playerRadius,
+  stepMatch,
+  type MatchConfig,
+  type SimEvent,
+} from '../src/shared/physics';
 
 const cfg: MatchConfig = { scoreLimit: 3, timeLimitTicks: 0 };
 const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
@@ -150,6 +157,7 @@ const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
   assert.ok(events.some((e) => e.kind === 'shove'), 'shove event fires');
   assert.ok(q.vx > 3, `opponent launched away (vx=${q.vx.toFixed(2)})`);
   assert.ok(s.players[0].skillActiveUntil === 0, 'bodycheck is consumed');
+  assert.ok(s.players[0].skillCooldownUntil > s.tick, 'cooldown starts after the shove');
 }
 
 // --- 10. magnet pulls the ball in and holds it ---
@@ -167,7 +175,29 @@ const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
   assert.ok(d < 32, `ball pulled in and held (d=${d.toFixed(1)})`);
 }
 
-// --- 11. 3-team mode: goal in the top net credits the last toucher ---
+// helper: fire the ball into a specific team's goal and return the goal event
+function shootIntoGoal(
+  s: ReturnType<typeof createMatch>,
+  goalTeam: number,
+): Extract<SimEvent, { kind: 'goal' }> | undefined {
+  const goal = getGeometry(s.teams).goals.find((g) => g.team === goalTeam)!;
+  s.players.forEach((p, i) => {
+    // park everyone near the center, away from the shot
+    p.x = -150 + i * 50;
+    p.y = goal.ny !== 0 ? 0 : 120;
+  });
+  s.ball.x = goal.cx - goal.nx * 15;
+  s.ball.y = goal.cy - goal.ny * 15;
+  s.ball.vx = goal.nx * 6;
+  s.ball.vy = goal.ny * 6;
+  let ev: Extract<SimEvent, { kind: 'goal' }> | undefined;
+  for (let i = 0; i < 30 && !ev; i++) {
+    ev = stepMatch(s, cfg, noJitter).find((e) => e.kind === 'goal') as typeof ev;
+  }
+  return ev;
+}
+
+// --- 11. triangle (3 teams): goal credits last toucher, conceder loses one ---
 {
   const s = createMatch(
     [
@@ -177,25 +207,14 @@ const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
     ],
     3,
   );
-  s.players.forEach((p, i) => {
-    p.x = -300 + i * 60; // clear everyone out of the shot path
-    p.y = 150;
-  });
   s.lastTouchTeam = 0; // red touched it last
-  s.ball.x = 0;
-  s.ball.y = -FIELD.halfH + 15;
-  s.ball.vx = 0;
-  s.ball.vy = -6;
-  let goal: { kind: string; team?: number } | undefined;
-  for (let i = 0; i < 30 && !goal; i++) {
-    goal = stepMatch(s, cfg, noJitter).find((e) => e.kind === 'goal');
-  }
-  assert.ok(goal, 'ball passes through the open top mouth and scores');
-  assert.equal((goal as { team: number }).team, 0, 'credited to the last toucher (red)');
-  assert.deepEqual(s.score, [1, 0, 0]);
+  const goal = shootIntoGoal(s, 2); // into green's net (bottom side)
+  assert.ok(goal, 'ball crosses the triangle bottom goal line');
+  assert.equal(goal!.team, 0, 'credited to the last toucher (red)');
+  assert.deepEqual(s.score, [1, 0, -1], 'scorer +1, conceder -1');
 }
 
-// --- 12. 3-team mode: own goal credits nobody ---
+// --- 12a. triangle: panic own-goal still credits the attacker ---
 {
   const s = createMatch(
     [
@@ -204,21 +223,28 @@ const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
     ],
     3,
   );
-  s.players.forEach((p, i) => {
-    p.x = -300 + i * 60;
-    p.y = 150;
-  });
-  s.lastTouchTeam = 2; // green knocked it into their own net
-  s.ball.x = 0;
-  s.ball.y = -FIELD.halfH + 15;
-  s.ball.vy = -6;
-  let goal: { kind: string; team?: number } | undefined;
-  for (let i = 0; i < 30 && !goal; i++) {
-    goal = stepMatch(s, cfg, noJitter).find((e) => e.kind === 'goal');
-  }
+  s.prevTouchTeam = 0; // red attacked...
+  s.lastTouchTeam = 2; // ...then green smashed it into their own net
+  const goal = shootIntoGoal(s, 2);
   assert.ok(goal, 'own goal still resets play');
-  assert.equal((goal as { team: number }).team, -1, 'nobody credited');
-  assert.deepEqual(s.score, [0, 0, 0]);
+  assert.equal(goal!.team, 0, 'previous toucher (red) gets the point');
+  assert.deepEqual(s.score, [1, 0, -1]);
+}
+
+// --- 12b. triangle: own goal with no prior toucher credits nobody ---
+{
+  const s = createMatch(
+    [
+      { id: 1, team: 0, charId: 'classic' },
+      { id: 2, team: 2, charId: 'classic' },
+    ],
+    3,
+  );
+  s.lastTouchTeam = 2; // green alone touched it
+  const goal = shootIntoGoal(s, 2);
+  assert.ok(goal, 'own goal still resets play');
+  assert.equal(goal!.team, -1, 'nobody credited');
+  assert.deepEqual(s.score, [0, 0, -1], 'conceder still loses a point');
 }
 
 // --- 13. hot ball fires off any touch, no kick needed ---
@@ -234,6 +260,90 @@ const noJitter = () => 0.5; // (0.5 * 2 - 1) = 0, deterministic straight return
   const events = stepMatch(s, { ...cfg, hotball: true }, noJitter);
   assert.ok(events.some((e) => e.kind === 'kick'), 'auto-fire emits a kick event');
   assert.ok(s.ball.vx > 3, `ball fired away on touch (vx=${s.ball.vx.toFixed(2)})`);
+}
+
+// --- 14. square (4 teams): top goal works, scoring rules hold ---
+{
+  const s = createMatch(
+    [
+      { id: 1, team: 0, charId: 'classic' },
+      { id: 2, team: 1, charId: 'classic' },
+      { id: 3, team: 2, charId: 'classic' },
+      { id: 4, team: 3, charId: 'classic' },
+    ],
+    4,
+  );
+  s.lastTouchTeam = 1; // blue touched it last
+  const goal = shootIntoGoal(s, 2); // into green's net (top side)
+  assert.ok(goal, 'ball crosses the square top goal line');
+  assert.equal(goal!.team, 1, 'credited to blue');
+  assert.deepEqual(s.score, [0, 1, -1, 0]);
+}
+
+// --- 15. kickoff possession: opponents held out until the first touch ---
+{
+  const s = createMatch(
+    [
+      { id: 1, team: 0, charId: 'classic' },
+      { id: 2, team: 1, charId: 'classic' },
+    ],
+    2,
+    0, // red has the kickoff
+  );
+  const [p, q] = s.players;
+  q.x = 60; // blue tries to camp the ball
+  q.y = 0;
+  q.vx = 0;
+  q.vy = 0;
+  stepMatch(s, cfg, noJitter);
+  assert.ok(
+    Math.hypot(q.x, q.y) >= KICKOFF_BARRIER + 14,
+    `opponent held outside the circle (d=${Math.hypot(q.x, q.y).toFixed(1)})`,
+  );
+  assert.equal(s.kickoffTeam, 0, 'kickoff persists until the ball is touched');
+  // red takes the kickoff: possession lifts
+  p.x = -26;
+  p.y = 0;
+  p.kickCooldownUntil = 0;
+  p.input.kick = true;
+  p.kickPressTick = s.tick;
+  stepMatch(s, cfg, noJitter);
+  assert.equal(s.kickoffTeam, -1, 'play is live after the first touch');
+}
+
+// --- 16. kick buffer: a slightly-early tap still fires on contact ---
+{
+  const s = createMatch([{ id: 1, team: 0, charId: 'classic' }]);
+  const p = s.players[0];
+  p.x = 0;
+  p.y = 0;
+  p.kickCooldownUntil = 0;
+  s.ball.x = 44;
+  s.ball.y = 0;
+  s.ball.vx = -6;
+  p.input.kick = false; // tapped and already released before contact
+  p.kickPressTick = s.tick;
+  let fired = false;
+  for (let i = 0; i < 5 && !fired; i++) {
+    fired = stepMatch(s, cfg, noJitter).some((e) => e.kind === 'kick' || e.kind === 'perfect');
+  }
+  assert.ok(fired, 'buffered press fires when the ball comes into range');
+  assert.ok(s.ball.vx > 0, 'ball sent away');
+}
+
+// --- 17. armed skills: cooldown starts when spent or expired, not on arm ---
+{
+  const s = createMatch([{ id: 1, team: 0, charId: 'blaze' }]);
+  const p = s.players[0];
+  s.ball.x = 300; // out of reach so the shot is never spent
+  s.ball.y = 0;
+  p.pendingSkill = true;
+  stepMatch(s, cfg, noJitter);
+  assert.ok(p.skillActiveUntil > s.tick, 'power shot armed');
+  assert.equal(p.skillCooldownUntil, 0, 'no cooldown while armed');
+  for (let i = 0; i < 125; i++) stepMatch(s, cfg, noJitter); // 2 s window expires
+  assert.equal(p.skillActiveUntil, 0, 'armed window expired unused');
+  assert.ok(p.skillCooldownUntil > s.tick, 'cooldown started on expiry');
 }
 
 console.log('physics tests: all OK');

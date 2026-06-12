@@ -1,11 +1,19 @@
 // Authoritative match simulation. Pure data + step function so the server can
 // run it and the client can reuse pieces (movement integration) for prediction.
 //
-// Teams & goals: team 0 defends the LEFT goal, team 1 the RIGHT. In 3-team
-// mode team 2 defends a goal in the TOP wall; in 4-team mode team 3 defends
-// the BOTTOM wall. Goals are credited to the last team that touched the ball.
+// Maps are geometry-driven: 2 teams play on the classic rectangle, 3 teams on
+// an equilateral triangle, 4 teams on a square — one goal per side, owned by
+// the team listed in `Geometry.goals`. Walls only block the BALL (players roam
+// the whole arena, like Haxball); posts block everyone.
+//
+// Scoring: with 2 teams the opponent scores. With 3+ teams the last team that
+// touched the ball scores (+1) and the conceding team LOSES a point (-1); own
+// goals credit nobody but still cost the conceder.
+//
+// Kickoff: after a goal the conceding team restarts — everyone else is held
+// outside KICKOFF_BARRIER until the ball is touched.
 
-import { BALL, FIELD, KICKOFF_PAUSE_TICKS, PERFECT, PLAYER } from './constants';
+import { BALL, FIELD, KICKOFF_BARRIER, KICKOFF_PAUSE_TICKS, PERFECT, PLAYER } from './constants';
 import { getCharacter } from './characters';
 
 export interface InputState {
@@ -47,7 +55,7 @@ export type SimEvent =
   | { kind: 'shove'; id: number; x: number; y: number }
   | { kind: 'goal'; team: number } // scoring team; -1 = own goal, nobody credited
   | { kind: 'end'; winner: number } // -1 = draw / stopped
-  | { kind: 'kickoff' };
+  | { kind: 'kickoff'; team: number }; // team that restarts; -1 = free
 
 export interface SimState {
   tick: number;
@@ -58,6 +66,9 @@ export interface SimState {
   goldenWinner: number; // team that scored during golden goal, -1 = none yet
   teams: number; // 2, 3 or 4
   lastTouchTeam: number; // last team to touch the ball, -1 = nobody yet
+  prevTouchTeam: number; // the different team that touched it before that
+  kickoffTeam: number; // team with kickoff possession, -1 = free play
+  nextKickoffTeam: number; // who restarts after the current goal pause
   score: number[]; // one entry per team
   ball: Disc;
   players: SimPlayer[];
@@ -69,18 +80,188 @@ export interface MatchConfig {
   hotball?: boolean; // the ball fires itself off any touch
 }
 
-function postsFor(teams: number): { x: number; y: number }[] {
-  const { halfW: hw, halfH: hh, goalHalf: gw } = FIELD;
-  const posts = [
-    { x: -hw, y: -gw },
-    { x: -hw, y: gw },
-    { x: hw, y: -gw },
-    { x: hw, y: gw },
-  ];
-  if (teams >= 3) posts.push({ x: -gw, y: -hh }, { x: gw, y: -hh });
-  if (teams >= 4) posts.push({ x: -gw, y: hh }, { x: gw, y: hh });
-  return posts;
+// ---------------------------------------------------------------------------
+// Arena geometry
+// ---------------------------------------------------------------------------
+
+export interface Point {
+  x: number;
+  y: number;
 }
+
+export interface Segment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  e: number; // restitution
+}
+
+export interface GoalGeom {
+  team: number;
+  cx: number; // mouth center on the goal line
+  cy: number;
+  ux: number; // unit vector along the line
+  uy: number;
+  nx: number; // outward normal
+  ny: number;
+  mouthHalf: number;
+  depth: number;
+  posts: Point[];
+  netPoly: Point[]; // [e1, e1+n*d, e2+n*d, e2] for rendering
+}
+
+export interface Geometry {
+  teams: number;
+  pitch: Point[]; // pitch polygon
+  walls: Segment[]; // ball-blocking segments
+  goals: GoalGeom[];
+  minX: number; // player roam limits (margin included)
+  maxX: number;
+  minY: number;
+  maxY: number;
+  viewCx: number; // world point the camera centers on
+  viewCy: number;
+  viewX: number; // view half-extents
+  viewY: number;
+}
+
+function buildSide(
+  a: Point,
+  b: Point,
+  team: number | null,
+  walls: Segment[],
+  goals: GoalGeom[],
+): void {
+  const wallE = FIELD.wallRestitution;
+  const netE = FIELD.netRestitution;
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const ux = (b.x - a.x) / len;
+  const uy = (b.y - a.y) / len;
+  if (team === null) {
+    walls.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, e: wallE });
+    return;
+  }
+  // outward normal: perpendicular pointing away from the arena center (origin)
+  let nx = uy;
+  let ny = -ux;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  if (nx * mx + ny * my < 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const mh = FIELD.goalHalf;
+  const d = FIELD.goalDepth;
+  const e1: Point = { x: mx - ux * mh, y: my - uy * mh };
+  const e2: Point = { x: mx + ux * mh, y: my + uy * mh };
+  const d1: Point = { x: e1.x + nx * d, y: e1.y + ny * d };
+  const d2: Point = { x: e2.x + nx * d, y: e2.y + ny * d };
+  walls.push({ x1: a.x, y1: a.y, x2: e1.x, y2: e1.y, e: wallE });
+  walls.push({ x1: e2.x, y1: e2.y, x2: b.x, y2: b.y, e: wallE });
+  walls.push({ x1: e1.x, y1: e1.y, x2: d1.x, y2: d1.y, e: netE });
+  walls.push({ x1: e2.x, y1: e2.y, x2: d2.x, y2: d2.y, e: netE });
+  walls.push({ x1: d1.x, y1: d1.y, x2: d2.x, y2: d2.y, e: netE });
+  goals.push({
+    team,
+    cx: mx,
+    cy: my,
+    ux,
+    uy,
+    nx,
+    ny,
+    mouthHalf: mh,
+    depth: d,
+    posts: [e1, e2],
+    netPoly: [e1, d1, d2, e2],
+  });
+}
+
+const geomCache = new Map<number, Geometry>();
+
+export function getGeometry(teams: number): Geometry {
+  const cached = geomCache.get(teams);
+  if (cached) return cached;
+
+  const walls: Segment[] = [];
+  const goals: GoalGeom[] = [];
+  let pitch: Point[];
+
+  if (teams === 3) {
+    // equilateral triangle: apex up, goals mid-side
+    // team 0 = upper-left side, team 1 = upper-right side, team 2 = bottom
+    const ri = 208; // inradius
+    const half = ri * Math.sqrt(3); // half side length
+    const v0: Point = { x: 0, y: -2 * ri }; // apex
+    const v1: Point = { x: half, y: ri }; // bottom-right
+    const v2: Point = { x: -half, y: ri }; // bottom-left
+    pitch = [v0, v1, v2];
+    buildSide(v2, v0, 0, walls, goals); // left side
+    buildSide(v0, v1, 1, walls, goals); // right side
+    buildSide(v1, v2, 2, walls, goals); // bottom side
+  } else if (teams === 4) {
+    // square, one goal per side: 0 left, 1 right, 2 top, 3 bottom
+    const s = 310;
+    const tl: Point = { x: -s, y: -s };
+    const tr: Point = { x: s, y: -s };
+    const br: Point = { x: s, y: s };
+    const bl: Point = { x: -s, y: s };
+    pitch = [tl, tr, br, bl];
+    buildSide(bl, tl, 0, walls, goals);
+    buildSide(tr, br, 1, walls, goals);
+    buildSide(tl, tr, 2, walls, goals);
+    buildSide(br, bl, 3, walls, goals);
+  } else {
+    // classic rectangle, goals left/right
+    const hw = FIELD.halfW;
+    const hh = FIELD.halfH;
+    const tl: Point = { x: -hw, y: -hh };
+    const tr: Point = { x: hw, y: -hh };
+    const br: Point = { x: hw, y: hh };
+    const bl: Point = { x: -hw, y: hh };
+    pitch = [tl, tr, br, bl];
+    buildSide(bl, tl, 0, walls, goals);
+    buildSide(tr, br, 1, walls, goals);
+    buildSide(tl, tr, null, walls, goals);
+    buildSide(br, bl, null, walls, goals);
+  }
+
+  // bounding box over pitch + nets
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  const consider = (p: Point) => {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  };
+  pitch.forEach(consider);
+  for (const g of goals) g.netPoly.forEach(consider);
+
+  const m = FIELD.playerMargin;
+  const geom: Geometry = {
+    teams,
+    pitch,
+    walls,
+    goals,
+    minX: minX - m,
+    maxX: maxX + m,
+    minY: minY - m,
+    maxY: maxY + m,
+    viewCx: (minX + maxX) / 2,
+    viewCy: (minY + maxY) / 2,
+    viewX: (maxX - minX) / 2 + 45,
+    viewY: (maxY - minY) / 2 + 45,
+  };
+  geomCache.set(teams, geom);
+  return geom;
+}
+
+// ---------------------------------------------------------------------------
+// Players
+// ---------------------------------------------------------------------------
 
 export function createPlayer(id: number, team: number, charId: string): SimPlayer {
   return {
@@ -104,6 +285,7 @@ export function createPlayer(id: number, team: number, charId: string): SimPlaye
 export function createMatch(
   roster: { id: number; team: number; charId: string }[],
   teams = 2,
+  kickoffTeam = -1,
 ): SimState {
   const state: SimState = {
     tick: 0,
@@ -114,36 +296,50 @@ export function createMatch(
     goldenWinner: -1,
     teams,
     lastTouchTeam: -1,
+    prevTouchTeam: -1,
+    kickoffTeam: -1,
+    nextKickoffTeam: -1,
     score: new Array(teams).fill(0),
     ball: { x: 0, y: 0, vx: 0, vy: 0 },
     players: roster.map((r) => createPlayer(r.id, r.team, r.charId)),
   };
-  placeKickoff(state);
+  placeKickoff(state, kickoffTeam);
   return state;
 }
 
-export function placeKickoff(state: SimState): void {
+// Base spawn point for a team: between the arena center and their own goal.
+function teamSpot(geom: Geometry, team: number): { bx: number; by: number; ux: number; uy: number } {
+  const goal = geom.goals.find((g) => g.team === team) ?? geom.goals[0];
+  const lineDist = goal.cx * goal.nx + goal.cy * goal.ny; // distance of goal line from center
+  return {
+    bx: goal.cx - goal.nx * lineDist * 0.55,
+    by: goal.cy - goal.ny * lineDist * 0.55,
+    ux: goal.ux,
+    uy: goal.uy,
+  };
+}
+
+// Remember which teams touched the ball (for goal attribution). Keeps the
+// last two DISTINCT teams so panic own-goals still credit the attacker.
+function noteTouch(state: SimState, team: number): void {
+  if (team === state.lastTouchTeam) return;
+  state.prevTouchTeam = state.lastTouchTeam;
+  state.lastTouchTeam = team;
+}
+
+export function placeKickoff(state: SimState, kickoffTeam = -1): void {
   state.ball = { x: 0, y: 0, vx: 0, vy: 0 };
   state.lastTouchTeam = -1;
+  state.prevTouchTeam = -1;
+  state.kickoffTeam = kickoffTeam;
+  const geom = getGeometry(state.teams);
   for (let team = 0; team < state.teams; team++) {
     const list = state.players.filter((p) => p.team === team);
-    const lateral = team < 2 ? FIELD.halfH : FIELD.halfW;
-    const spacing = Math.min(70, (lateral * 2 - 80) / Math.max(1, list.length - 1));
+    const spot = teamSpot(geom, team);
     list.forEach((p, i) => {
-      const off = (i - (list.length - 1) / 2) * spacing;
-      if (team === 0) {
-        p.x = -170;
-        p.y = off;
-      } else if (team === 1) {
-        p.x = 170;
-        p.y = off;
-      } else if (team === 2) {
-        p.x = off;
-        p.y = -140;
-      } else {
-        p.x = off;
-        p.y = 140;
-      }
+      const off = (i - (list.length - 1) / 2) * 60;
+      p.x = spot.bx + spot.ux * off;
+      p.y = spot.by + spot.uy * off;
       p.vx = 0;
       p.vy = 0;
       p.kickCooldownUntil = state.tick + 10;
@@ -158,21 +354,12 @@ export function addPlayerToSim(
   charId: string,
 ): SimPlayer {
   const p = createPlayer(id, team, charId);
+  const geom = getGeometry(state.teams);
+  const spot = teamSpot(geom, team);
   const teammates = state.players.filter((q) => q.team === team).length;
   const off = ((teammates % 5) - 2) * 60;
-  if (team === 0) {
-    p.x = -FIELD.halfW * 0.6;
-    p.y = off;
-  } else if (team === 1) {
-    p.x = FIELD.halfW * 0.6;
-    p.y = off;
-  } else if (team === 2) {
-    p.x = off;
-    p.y = -FIELD.halfH * 0.6;
-  } else {
-    p.x = off;
-    p.y = FIELD.halfH * 0.6;
-  }
+  p.x = spot.bx + spot.ux * off;
+  p.y = spot.by + spot.uy * off;
   state.players.push(p);
   return p;
 }
@@ -194,6 +381,10 @@ export function playerRadius(p: SimPlayer, tick: number): number {
   if (c.skill?.id === 'fortress' && tick < p.skillActiveUntil) return c.radius * 2;
   return c.radius;
 }
+
+// ---------------------------------------------------------------------------
+// Collision primitives
+// ---------------------------------------------------------------------------
 
 // Impulse + positional correction between two dynamic discs.
 function collide(
@@ -258,107 +449,66 @@ function collideStatic(d: Disc, r: number, px: number, py: number, pr: number, e
   }
 }
 
-function ballWalls(b: Disc, teams: number): void {
-  const r = BALL.radius;
-  const { halfW: hw, halfH: hh, goalHalf: gw, goalDepth: gd } = FIELD;
-  const e = FIELD.wallRestitution;
-  const en = FIELD.netRestitution;
-  const topGoal = teams >= 3;
-  const bottomGoal = teams >= 4;
-
-  if (Math.abs(b.x) > hw) {
-    // inside a left/right goal net
-    if (b.y > gw - r) {
-      b.y = gw - r;
-      if (b.vy > 0) b.vy = -b.vy * en;
-    }
-    if (b.y < -gw + r) {
-      b.y = -gw + r;
-      if (b.vy < 0) b.vy = -b.vy * en;
-    }
-    if (b.x > hw + gd - r) {
-      b.x = hw + gd - r;
-      if (b.vx > 0) b.vx = -b.vx * en;
-    }
-    if (b.x < -hw - gd + r) {
-      b.x = -hw - gd + r;
-      if (b.vx < 0) b.vx = -b.vx * en;
-    }
-  } else if (b.y < -hh && topGoal) {
-    // inside the top goal net
-    if (b.x > gw - r) {
-      b.x = gw - r;
-      if (b.vx > 0) b.vx = -b.vx * en;
-    }
-    if (b.x < -gw + r) {
-      b.x = -gw + r;
-      if (b.vx < 0) b.vx = -b.vx * en;
-    }
-    if (b.y < -hh - gd + r) {
-      b.y = -hh - gd + r;
-      if (b.vy < 0) b.vy = -b.vy * en;
-    }
-  } else if (b.y > hh && bottomGoal) {
-    // inside the bottom goal net
-    if (b.x > gw - r) {
-      b.x = gw - r;
-      if (b.vx > 0) b.vx = -b.vx * en;
-    }
-    if (b.x < -gw + r) {
-      b.x = -gw + r;
-      if (b.vx < 0) b.vx = -b.vx * en;
-    }
-    if (b.y > hh + gd - r) {
-      b.y = hh + gd - r;
-      if (b.vy > 0) b.vy = -b.vy * en;
-    }
+// Collision against a wall segment (ball only).
+function collideSegment(b: Disc, r: number, seg: Segment): void {
+  const dx = seg.x2 - seg.x1;
+  const dy = seg.y2 - seg.y1;
+  const len2 = dx * dx + dy * dy;
+  let t = ((b.x - seg.x1) * dx + (b.y - seg.y1) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = seg.x1 + t * dx;
+  const cy = seg.y1 + t * dy;
+  let vx = b.x - cx;
+  let vy = b.y - cy;
+  let d = Math.hypot(vx, vy);
+  if (d >= r) return;
+  if (d < 1e-6) {
+    // dead center on the line: push along the segment normal
+    const len = Math.sqrt(len2);
+    vx = -dy / len;
+    vy = dx / len;
+    d = 1;
   } else {
-    // main field: solid walls except open goal mouths
-    const inLRMouth = Math.abs(b.y) < gw;
-    const inTBMouth = Math.abs(b.x) < gw;
-    if (b.y > hh - r && !(bottomGoal && inTBMouth)) {
-      b.y = hh - r;
-      if (b.vy > 0) b.vy = -b.vy * e;
-    }
-    if (b.y < -hh + r && !(topGoal && inTBMouth)) {
-      b.y = -hh + r;
-      if (b.vy < 0) b.vy = -b.vy * e;
-    }
-    if (b.x > hw - r && !inLRMouth) {
-      b.x = hw - r;
-      if (b.vx > 0) b.vx = -b.vx * e;
-    }
-    if (b.x < -hw + r && !inLRMouth) {
-      b.x = -hw + r;
-      if (b.vx < 0) b.vx = -b.vx * e;
-    }
+    vx /= d;
+    vy /= d;
+  }
+  b.x = cx + vx * r;
+  b.y = cy + vy * r;
+  const vn = b.vx * vx + b.vy * vy;
+  if (vn < 0) {
+    b.vx -= (1 + seg.e) * vn * vx;
+    b.vy -= (1 + seg.e) * vn * vy;
   }
 }
 
-function playerBounds(p: Disc, r: number): void {
-  const mx = FIELD.halfW + FIELD.playerMargin;
-  const my = FIELD.halfH + FIELD.playerMargin;
-  if (p.x > mx - r) {
-    p.x = mx - r;
+function playerBounds(p: Disc, r: number, geom: Geometry): void {
+  if (p.x > geom.maxX - r) {
+    p.x = geom.maxX - r;
     if (p.vx > 0) p.vx = 0;
   }
-  if (p.x < -mx + r) {
-    p.x = -mx + r;
+  if (p.x < geom.minX + r) {
+    p.x = geom.minX + r;
     if (p.vx < 0) p.vx = 0;
   }
-  if (p.y > my - r) {
-    p.y = my - r;
+  if (p.y > geom.maxY - r) {
+    p.y = geom.maxY - r;
     if (p.vy > 0) p.vy = 0;
   }
-  if (p.y < -my + r) {
-    p.y = -my + r;
+  if (p.y < geom.minY + r) {
+    p.y = geom.minY + r;
     if (p.vy < 0) p.vy = 0;
   }
 }
 
 // Movement integration for one player. Also used by the client to predict its
 // own disc (collisions are ignored there; the server stays authoritative).
-export function integratePlayer(p: Disc, input: InputState, charId: string, radius?: number): void {
+export function integratePlayer(
+  p: Disc,
+  input: InputState,
+  charId: string,
+  radius?: number,
+  teams = 2,
+): void {
   const c = getCharacter(charId);
   let ax = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   let ay = (input.down ? 1 : 0) - (input.up ? 1 : 0);
@@ -372,22 +522,28 @@ export function integratePlayer(p: Disc, input: InputState, charId: string, radi
   p.vy = (p.vy + ay * a) * PLAYER.damping;
   p.x += p.vx;
   p.y += p.vy;
-  playerBounds(p, radius ?? c.radius);
+  playerBounds(p, radius ?? c.radius, getGeometry(teams));
 }
 
 // Goal against `conceding`. With 2 teams the other team scores; with 3+ teams
-// the last team to touch the ball scores (own goals credit nobody).
+// the last toucher scores (+1) and the conceder loses a point (-1). If the
+// conceder touched it last (own goal), the previous toucher is credited so
+// deliberately own-goaling can't deny the attacker.
 function scoreGoal(state: SimState, conceding: number, events: SimEvent[]): void {
   let scorer = -1;
   if (state.teams === 2) {
     scorer = conceding === 0 ? 1 : 0;
   } else if (state.lastTouchTeam >= 0 && state.lastTouchTeam !== conceding) {
     scorer = state.lastTouchTeam;
+  } else if (state.prevTouchTeam >= 0 && state.prevTouchTeam !== conceding) {
+    scorer = state.prevTouchTeam;
   }
   if (scorer >= 0) {
     state.score[scorer]++;
     if (state.golden) state.goldenWinner = scorer;
   }
+  if (state.teams > 2) state.score[conceding]--;
+  state.nextKickoffTeam = conceding;
   state.phase = 1;
   state.phaseUntil = state.tick + KICKOFF_PAUSE_TICKS;
   events.push({ kind: 'goal', team: scorer });
@@ -407,6 +563,17 @@ export function stepMatch(
   const t = state.tick;
   const events: SimEvent[] = [];
   const b = state.ball;
+  const geom = getGeometry(state.teams);
+
+  // --- armed skills (powershot, shove): expire unused -> cooldown starts now ---
+  for (const p of state.players) {
+    const sk = getCharacter(p.charId).skill;
+    if (!sk || (sk.id !== 'powershot' && sk.id !== 'shove')) continue;
+    if (p.skillActiveUntil > 0 && t >= p.skillActiveUntil) {
+      p.skillActiveUntil = 0;
+      p.skillCooldownUntil = t + sk.cooldown;
+    }
+  }
 
   // --- skill activation ---
   for (const p of state.players) {
@@ -414,6 +581,14 @@ export function stepMatch(
     p.pendingSkill = false;
     const c = getCharacter(p.charId);
     if (!c.skill || t < p.skillCooldownUntil || state.phase === 2) continue;
+    const isArmed = c.skill.id === 'powershot' || c.skill.id === 'shove';
+    if (isArmed) {
+      // cooldown is deferred until the skill is spent or expires
+      if (t < p.skillActiveUntil) continue; // already armed
+      p.skillActiveUntil = t + c.skill.duration;
+      events.push({ kind: 'skill', id: p.id, skill: c.skill.id });
+      continue;
+    }
     p.skillCooldownUntil = t + c.skill.cooldown;
     if (c.skill.id === 'dash') {
       let dx = (p.input.right ? 1 : 0) - (p.input.left ? 1 : 0);
@@ -423,12 +598,15 @@ export function stepMatch(
         if (sp > 0.1) {
           dx = p.vx / sp;
           dy = p.vy / sp;
-        } else if (p.team === 2) {
-          dy = 1; // default: away from your own goal
-        } else if (p.team === 3) {
-          dy = -1;
         } else {
-          dx = p.team === 0 ? 1 : -1;
+          // default: from your own goal toward the center
+          const goal = geom.goals.find((g) => g.team === p.team);
+          if (goal) {
+            dx = -goal.nx;
+            dy = -goal.ny;
+          } else {
+            dx = 1;
+          }
         }
       } else {
         const n = Math.hypot(dx, dy);
@@ -445,7 +623,7 @@ export function stepMatch(
 
   // --- movement ---
   for (const p of state.players) {
-    integratePlayer(p, p.input, p.charId, playerRadius(p, t));
+    integratePlayer(p, p.input, p.charId, playerRadius(p, t), state.teams);
   }
 
   // --- ball ---
@@ -458,6 +636,8 @@ export function stepMatch(
   for (const p of state.players) {
     const c = getCharacter(p.charId);
     if (c.skill?.id !== 'magnet' || t >= p.skillActiveUntil) continue;
+    // no magnet shenanigans against a kickoff you don't own
+    if (state.kickoffTeam >= 0 && p.team !== state.kickoffTeam) continue;
     const pr = playerRadius(p, t);
     const dx = b.x - p.x;
     const dy = b.y - p.y;
@@ -474,7 +654,7 @@ export function stepMatch(
       const ay = p.y + ny * (pr + BALL.radius + 1);
       b.x += (ax - b.x) * 0.35;
       b.y += (ay - b.y) * 0.35;
-      state.lastTouchTeam = p.team;
+      noteTouch(state, p.team);
     } else {
       const pull = 0.32 * (1 - d / radius) + 0.07;
       b.vx -= nx * pull;
@@ -487,13 +667,19 @@ export function stepMatch(
   // the ball's true approach speed; otherwise the body bounce on the contact
   // tick would cancel most of it.
   for (const p of state.players) {
-    if (!p.input.kick || t < p.kickCooldownUntil) continue;
+    // held button OR a recent unspent press (buffer): a hair-early tap still fires
+    const buffered =
+      p.kickPressTick > p.kickConsumedTick && t - p.kickPressTick <= PLAYER.kickBufferTicks;
+    if ((!p.input.kick && !buffered) || t < p.kickCooldownUntil) continue;
     const c = getCharacter(p.charId);
     const pr = playerRadius(p, t);
     const dx = b.x - p.x;
     const dy = b.y - p.y;
     const d = Math.hypot(dx, dy);
-    const ballInRange = d <= pr + BALL.radius + PLAYER.kickRange;
+    const powered = c.skill?.id === 'powershot' && t < p.skillActiveUntil;
+    // Power Shot gets extra reach so the boosted kick is easier to land
+    const reach = pr + BALL.radius + PLAYER.kickRange + (powered ? 8 : 0);
+    const ballInRange = d <= reach;
 
     // Bodycheck: an armed shove launches nearby opponents on the kick.
     let shoved = false;
@@ -511,7 +697,8 @@ export function stepMatch(
         shoved = true;
       }
       if (shoved) {
-        p.skillActiveUntil = 0; // bodycheck is spent
+        p.skillActiveUntil = 0; // bodycheck is spent: cooldown starts now
+        p.skillCooldownUntil = t + c.skill.cooldown;
         events.push({ kind: 'shove', id: p.id, x: p.x, y: p.y });
       }
     }
@@ -523,10 +710,9 @@ export function stepMatch(
       }
       continue;
     }
-    const nx = d > 1e-6 ? dx / d : p.team === 0 ? 1 : -1;
+    const nx = d > 1e-6 ? dx / d : 1;
     const ny = d > 1e-6 ? dy / d : 0;
 
-    const powered = c.skill?.id === 'powershot' && t < p.skillActiveUntil;
     const fresh =
       p.kickPressTick > p.kickConsumedTick && t - p.kickPressTick <= PERFECT.windowTicks;
     // approach speed: how fast the ball is closing in on the player
@@ -549,10 +735,13 @@ export function stepMatch(
       b.vy += ny * strength;
       events.push({ kind: 'kick', id: p.id });
     }
-    state.lastTouchTeam = p.team;
+    noteTouch(state, p.team);
     p.kickConsumedTick = Math.max(p.kickPressTick, p.kickConsumedTick);
     p.kickCooldownUntil = t + PLAYER.kickCooldownTicks;
-    if (powered) p.skillActiveUntil = 0; // power shot is spent on one kick
+    if (powered) {
+      p.skillActiveUntil = 0; // power shot is spent: cooldown starts now
+      p.skillCooldownUntil = t + c.skill!.cooldown;
+    }
     // kicking a magnet-held ball releases it
     if (c.skill?.id === 'magnet' && t < p.skillActiveUntil) p.skillActiveUntil = 0;
   }
@@ -572,7 +761,7 @@ export function stepMatch(
       b.vx = nx * c.kickStrength * 1.15 + p.vx * 0.3;
       b.vy = ny * c.kickStrength * 1.15 + p.vy * 0.3;
       p.kickCooldownUntil = t + PLAYER.kickCooldownTicks;
-      state.lastTouchTeam = p.team;
+      noteTouch(state, p.team);
       events.push({ kind: 'kick', id: p.id });
     }
   }
@@ -595,28 +784,62 @@ export function stepMatch(
   }
   for (const p of state.players) {
     const touched = collide(p, b, playerRadius(p, t), BALL.radius, playerInvMass(p, t), BALL.invMass, 0.5);
-    if (touched) state.lastTouchTeam = p.team;
+    if (touched) noteTouch(state, p.team);
   }
-  for (const post of postsFor(state.teams)) {
-    collideStatic(b, BALL.radius, post.x, post.y, FIELD.postRadius, 0.5);
-    for (const p of state.players) {
-      collideStatic(p, playerRadius(p, t), post.x, post.y, FIELD.postRadius, 0.5);
+  for (const goal of geom.goals) {
+    for (const post of goal.posts) {
+      collideStatic(b, BALL.radius, post.x, post.y, FIELD.postRadius, 0.5);
+      for (const p of state.players) {
+        collideStatic(p, playerRadius(p, t), post.x, post.y, FIELD.postRadius, 0.5);
+      }
     }
   }
-  ballWalls(b, state.teams);
+
+  // --- kickoff possession: hold the other teams outside the center circle ---
+  if (state.kickoffTeam >= 0) {
+    if (state.lastTouchTeam >= 0 || Math.hypot(b.x, b.y) > 3) {
+      state.kickoffTeam = -1; // ball is in play
+    }
+  }
+  if (state.kickoffTeam >= 0) {
+    for (const p of state.players) {
+      if (p.team === state.kickoffTeam) continue;
+      const d = Math.hypot(p.x, p.y);
+      const min = KICKOFF_BARRIER + playerRadius(p, t);
+      if (d < min) {
+        const nx = d > 1e-6 ? p.x / d : 1;
+        const ny = d > 1e-6 ? p.y / d : 0;
+        p.x = nx * min;
+        p.y = ny * min;
+        const vn = p.vx * nx + p.vy * ny;
+        if (vn < 0) {
+          p.vx -= vn * nx;
+          p.vy -= vn * ny;
+        }
+      }
+    }
+  }
+
+  // --- walls (ball only) and player roam limits ---
+  for (const seg of geom.walls) {
+    collideSegment(b, BALL.radius, seg);
+  }
   for (const p of state.players) {
-    playerBounds(p, playerRadius(p, t));
+    playerBounds(p, playerRadius(p, t), geom);
   }
 
   // --- goals ---
   if (state.phase === 0) {
-    const { halfW: hw, halfH: hh, goalHalf: gw } = FIELD;
-    let conceding = -1;
-    if (Math.abs(b.y) < gw && b.x > hw + BALL.radius) conceding = 1;
-    else if (Math.abs(b.y) < gw && b.x < -hw - BALL.radius) conceding = 0;
-    else if (state.teams >= 3 && Math.abs(b.x) < gw && b.y < -hh - BALL.radius) conceding = 2;
-    else if (state.teams >= 4 && Math.abs(b.x) < gw && b.y > hh + BALL.radius) conceding = 3;
-    if (conceding >= 0) scoreGoal(state, conceding, events);
+    for (const goal of geom.goals) {
+      const rx = b.x - goal.cx;
+      const ry = b.y - goal.cy;
+      const dN = rx * goal.nx + ry * goal.ny;
+      const dT = rx * goal.ux + ry * goal.uy;
+      if (dN > BALL.radius && dN < goal.depth + 30 && Math.abs(dT) < goal.mouthHalf) {
+        scoreGoal(state, goal.team, events);
+        break;
+      }
+    }
   }
 
   // --- clock and phase transitions ---
@@ -641,9 +864,9 @@ export function stepMatch(
       state.phase = 2;
       events.push({ kind: 'end', winner: state.goldenWinner });
     } else {
-      placeKickoff(state);
+      placeKickoff(state, state.nextKickoffTeam);
       state.phase = 0;
-      events.push({ kind: 'kickoff' });
+      events.push({ kind: 'kickoff', team: state.kickoffTeam });
     }
   }
 

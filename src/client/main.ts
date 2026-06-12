@@ -152,6 +152,23 @@ els.nick.addEventListener('change', () => {
   localStorage.setItem('nixball-nick', els.nick.value.trim());
 });
 
+// personal colour: applied only to YOUR disc on YOUR screen
+const myColorInput = $<HTMLInputElement>('my-color');
+const storedColor = localStorage.getItem('nixball-mycolor');
+if (storedColor) {
+  myColorInput.value = storedColor;
+  gameView.setMyColor(storedColor);
+}
+myColorInput.addEventListener('input', () => {
+  localStorage.setItem('nixball-mycolor', myColorInput.value);
+  gameView.setMyColor(myColorInput.value);
+});
+$('my-color-reset').addEventListener('click', () => {
+  localStorage.removeItem('nixball-mycolor');
+  gameView.setMyColor(null);
+  toast('Back to your team colour');
+});
+
 els.btnCreate.addEventListener('click', () => {
   if (!els.nick.value.trim()) {
     els.nick.focus();
@@ -219,18 +236,55 @@ function joinTeamButton(team: TeamOrSpec, label: string): HTMLButtonElement {
   return btn;
 }
 
+function sendSettings(): void {
+  const get = (id: string) => document.getElementById(id) as HTMLInputElement;
+  net.send({
+    t: 'settings',
+    name: get('ls-name').value.trim(),
+    isPublic: get('ls-pub').checked,
+    scoreLimit: Number(get('ls-score').value),
+    timeLimitMin: Number(get('ls-time').value),
+    teams: Number((document.getElementById('ls-teams') as HTMLSelectElement).value),
+    hotball: get('ls-hot').checked,
+    maxPlayers: Number(get('ls-max').value),
+  });
+}
+
+function renderSettingsLine(room: RoomStateMsg): void {
+  if (room.host === myId) {
+    // host edits settings right here; changes apply to the next match
+    const s = room.settings;
+    const teamOpts = [2, 3, 4]
+      .map((n) => `<option value="${n}" ${s.teams === n ? 'selected' : ''}>${n}</option>`)
+      .join('');
+    els.lobbySettings.innerHTML =
+      `<span class="ls-ctl">name <input id="ls-name" maxlength="24" value="${escapeHtml(room.name)}"></span>` +
+      `<span class="ls-ctl">first to <input id="ls-score" type="number" min="0" max="20" value="${s.scoreLimit}"></span>` +
+      `<span class="ls-ctl"><input id="ls-time" type="number" min="0" max="30" value="${s.timeLimitMin}"> min</span>` +
+      `<span class="ls-ctl">teams <select id="ls-teams">${teamOpts}</select></span>` +
+      `<span class="ls-ctl"><label><input id="ls-hot" type="checkbox" ${s.hotball ? 'checked' : ''}> hot ball</label></span>` +
+      `<span class="ls-ctl">max <input id="ls-max" type="number" min="2" max="12" value="${s.maxPlayers}"></span>` +
+      `<span class="ls-ctl"><label><input id="ls-pub" type="checkbox" ${room.isPublic ? 'checked' : ''}> public</label></span>`;
+    for (const id of ['ls-name', 'ls-score', 'ls-time', 'ls-teams', 'ls-hot', 'ls-max', 'ls-pub']) {
+      document.getElementById(id)!.addEventListener('change', sendSettings);
+    }
+  } else {
+    const parts: string[] = [];
+    parts.push(room.settings.scoreLimit > 0 ? `first to ${room.settings.scoreLimit}` : 'no score limit');
+    parts.push(room.settings.timeLimitMin > 0 ? `${room.settings.timeLimitMin} min` : 'no time limit');
+    if (room.settings.teams > 2) parts.push(`${room.settings.teams} teams`);
+    if (room.settings.hotball) parts.push('hot ball');
+    parts.push(room.isPublic ? 'public' : 'private');
+    els.lobbySettings.textContent = parts.join(' · ');
+  }
+}
+
 function renderLobby(): void {
   const room = currentRoom;
   if (!room) return;
   els.lobbyName.textContent = room.name;
   els.lobbyCode.textContent = room.code;
-  const parts: string[] = [];
-  parts.push(room.settings.scoreLimit > 0 ? `first to ${room.settings.scoreLimit}` : 'no score limit');
-  parts.push(room.settings.timeLimitMin > 0 ? `${room.settings.timeLimitMin} min` : 'no time limit');
-  if (room.settings.teams > 2) parts.push(`${room.settings.teams} teams`);
-  if (room.settings.hotball) parts.push('hot ball');
-  parts.push(room.isPublic ? 'public' : 'private');
-  els.lobbySettings.textContent = parts.join(' · ');
+  renderSettingsLine(room);
 
   const me = room.members.find((m) => m.id === myId);
 

@@ -10,10 +10,15 @@ football in the browser. No accounts, no downloads.
   snapshot interpolation + client-side prediction for a smooth feel.
 - **Rooms** — create public or private rooms with score limit, time limit, and max
   players. Join via the public list or an invite code/link (`https://yourhost/#CODE`).
-- **Game modes** — classic 2-team, or **3-team / 4-team** chaos with extra goals in
-  the top and bottom walls (goals credit the last team that touched the ball; own
-  goals credit nobody). Plus the **Hot ball** modifier: the ball fires itself off
+- **Game modes** — classic 2-team rectangle, **3 teams on a triangle pitch**, or
+  **4 teams on a square**, one goal per side. With 3+ teams a goal credits the last
+  team that touched the ball (+1) and the conceding team **loses a point**; own
+  goals credit nobody. Plus the **Hot ball** modifier: the ball fires itself off
   any touch — no kick button needed.
+- **Kickoff possession** — after a goal the conceding team restarts: everyone else
+  is held outside the center circle until the ball is touched.
+- **Live room settings** — the host can change score/time limits, team count, max
+  players, and hot ball right in the lobby between matches.
 - **Characters with skills** (data-driven, easy to extend):
 
   | Character | Role        | Skill                                                              |

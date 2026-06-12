@@ -41,6 +41,8 @@ export class GameView {
   private raf = 0;
   private running = false;
   private bannerTimer = 0;
+  private lastCd = 0; // previous skill cooldown, to detect "ready" transitions
+  private pulseTimer = 0;
   private onResize = () => this.renderer.resize();
 
   constructor(
@@ -53,6 +55,10 @@ export class GameView {
 
   get isRunning(): boolean {
     return this.running;
+  }
+
+  setMyColor(color: string | null): void {
+    this.renderer.myColor = color;
   }
 
   start(): void {
@@ -74,6 +80,7 @@ export class GameView {
     this.hasOffset = false;
     this.pred = null;
     this.effects = [];
+    this.lastCd = 0;
     this.setBanner('');
   }
 
@@ -140,7 +147,11 @@ export class GameView {
         break;
       }
       case 'kickoff':
-        this.setBanner('');
+        if (typeof e.team === 'number' && e.team >= 0) {
+          this.setBanner(`${TEAMS[e.team].name} kicks off`, TEAMS[e.team].color, 1700);
+        } else {
+          this.setBanner('');
+        }
         this.pred = null;
         break;
       case 'end': {
@@ -195,6 +206,7 @@ export class GameView {
       ball: { x: s.b[0], y: s.b[1] },
       players: s.p.map((w) => ({ id: w[0], x: w[1], y: w[2], vx: w[3], vy: w[4], flags: w[5], cd: w[6] })),
       ph: s.ph,
+      ko: s.ko ?? -1,
     };
   }
 
@@ -219,6 +231,7 @@ export class GameView {
       ball: { x: lerp(a.b[0], b.b[0]), y: lerp(a.b[1], b.b[1]) },
       players,
       ph: b.ph,
+      ko: b.ko ?? -1,
     };
   }
 
@@ -229,7 +242,7 @@ export class GameView {
 
     let world = this.hasOffset ? this.interpolate(now - this.offset - INTERP_DELAY) : null;
     if (!world) {
-      world = { ball: { x: 0, y: 0 }, players: [], ph: 0 };
+      world = { ball: { x: 0, y: 0 }, players: [], ph: 0, ko: -1 };
     }
 
     // client-side prediction for own disc: integrate input locally, then blend
@@ -244,7 +257,7 @@ export class GameView {
       this.predAcc += dt;
       let steps = 0;
       while (this.predAcc >= TICK_MS && steps < 4) {
-        integratePlayer(this.pred, this.localInput, charId);
+        integratePlayer(this.pred, this.localInput, charId, undefined, this.settings.teams);
         this.predAcc -= TICK_MS;
         steps++;
       }
@@ -273,7 +286,9 @@ export class GameView {
         const adx = world.ball.x - me.x;
         const ady = world.ball.y - me.y;
         const ad = Math.hypot(adx, ady);
-        if (ad > 1e-6 && ad <= char.radius + BALL.radius + PLAYER.kickRange + 14) {
+        // powered kicks reach 8px farther, plus a little margin so the arrow
+        // appears slightly before contact
+        if (ad > 1e-6 && ad <= char.radius + BALL.radius + PLAYER.kickRange + 22) {
           aim = { x: world.ball.x, y: world.ball.y, dx: adx / ad, dy: ady / ad };
         }
       }
@@ -318,7 +333,19 @@ export class GameView {
     if (me && char.skill) {
       const frac = 1 - Math.min(1, me.cd / char.skill.cooldown);
       this.hud.skillCd.style.width = `${Math.round(frac * 100)}%`;
-      this.hud.skill.classList.toggle('ready', me.cd === 0);
+      const armed = (me.flags & 2) !== 0;
+      const ready = me.cd === 0 && !armed;
+      // ping + pulse the chip the moment the skill comes off cooldown
+      if (ready && this.lastCd > 0) {
+        this.hud.skill.classList.add('pulse');
+        clearTimeout(this.pulseTimer);
+        this.pulseTimer = window.setTimeout(() => this.hud.skill.classList.remove('pulse'), 700);
+        this.sfx.ready();
+      }
+      this.lastCd = me.cd;
+      this.hud.skill.classList.toggle('ready', ready);
+      this.hud.skill.classList.toggle('armed', armed);
+      this.hud.skillName.textContent = armed ? `${char.skill.name} — ARMED` : char.skill.name;
     }
   }
 }

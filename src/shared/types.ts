@@ -46,6 +46,16 @@ export type C2S =
     }
   | { t: 'join'; code: string }
   | { t: 'leave' }
+  | {
+      t: 'settings'; // host-only, lobby-only partial update
+      name?: string;
+      isPublic?: boolean;
+      scoreLimit?: number;
+      timeLimitMin?: number;
+      maxPlayers?: number;
+      teams?: number;
+      hotball?: boolean;
+    }
   | { t: 'team'; team: TeamOrSpec }
   | { t: 'char'; charId: string }
   | { t: 'start' }
@@ -69,6 +79,7 @@ export interface WireState {
   s: number[]; // score per team
   c: number; // elapsed play ticks
   g: 0 | 1; // golden goal active
+  ko: number; // team with kickoff possession, -1 = free play
 }
 
 export type WireEvent =
@@ -78,7 +89,7 @@ export type WireEvent =
   | { t: 'ev'; e: 'shove'; id: number; x: number; y: number }
   | { t: 'ev'; e: 'goal'; team: number } // -1 = own goal, nobody credited
   | { t: 'ev'; e: 'end'; winner: number } // -1 = draw / stopped
-  | { t: 'ev'; e: 'kickoff' };
+  | { t: 'ev'; e: 'kickoff'; team?: number }; // team that restarts
 
 export interface RoomStateMsg {
   t: 'room';

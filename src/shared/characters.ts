@@ -26,9 +26,8 @@ export interface CharacterDef {
   skill: SkillDef | null;
 }
 
-// "until used" skills (powershot, shove) get a huge duration; the kick that
-// consumes them resets skillActiveUntil to 0 in physics.ts.
-const UNTIL_USED = 36000;
+// Armed skills (powershot, shove) stay primed for their duration; their
+// cooldown only starts once the skill is spent or the window expires.
 
 export const CHARACTERS: CharacterDef[] = [
   {
@@ -58,9 +57,9 @@ export const CHARACTERS: CharacterDef[] = [
     skill: {
       id: 'powershot',
       name: 'Power Shot',
-      desc: 'Your next kick hits 70% harder. An arrow shows where the ball will fly.',
+      desc: 'For 2 s your kick hits 70% harder with extra reach. Cooldown starts when spent.',
       cooldown: 480,
-      duration: UNTIL_USED,
+      duration: 120,
       magnitude: 1.7, // kick strength multiplier
     },
   },
@@ -118,10 +117,10 @@ export const CHARACTERS: CharacterDef[] = [
     skill: {
       id: 'shove',
       name: 'Bodycheck',
-      desc: 'Your next kick also launches nearby opponents flying.',
+      desc: 'For 2 s your kick also launches nearby opponents flying. Cooldown starts when spent.',
       cooldown: 420,
-      duration: UNTIL_USED,
-      magnitude: 7, // impulse applied to shoved players (px/tick)
+      duration: 120,
+      magnitude: 9, // impulse applied to shoved players (px/tick)
     },
   },
   {
@@ -131,15 +130,15 @@ export const CHARACTERS: CharacterDef[] = [
     desc: "The ball just can't quit him.",
     color: '#4dd0c9',
     radius: 15,
-    accel: 0.098,
-    kickStrength: 4.6,
+    accel: 0.094,
+    kickStrength: 4.4,
     invMass: 0.5,
-    stats: { speed: 3, power: 2, weight: 3 },
+    stats: { speed: 2, power: 2, weight: 3 },
     skill: {
       id: 'magnet',
       name: 'Magnet',
       desc: 'For 1 s the ball is gently pulled toward you — up close it sticks until you kick.',
-      cooldown: 600,
+      cooldown: 660,
       duration: 60,
       magnitude: 130, // attraction radius in px
     },

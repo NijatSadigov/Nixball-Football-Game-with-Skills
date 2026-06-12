@@ -68,4 +68,9 @@ export class Sfx {
   shove(): void {
     this.tone(110, 0.12, { type: 'triangle', gain: 0.24, slideTo: 55 });
   }
+
+  ready(): void {
+    this.tone(660, 0.07, { gain: 0.08 });
+    this.tone(990, 0.12, { gain: 0.08, delay: 0.07 });
+  }
 }

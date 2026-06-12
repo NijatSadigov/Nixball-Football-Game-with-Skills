@@ -178,11 +178,13 @@ class Room {
       send(m, { t: 'error', msg: 'At least one player must join a team.' });
       return;
     }
-    this.sim = createMatch(roster, this.settings.teams);
+    // red takes the opening kickoff (classic rules); after goals the conceder restarts
+    const startTeam = 0;
+    this.sim = createMatch(roster, this.settings.teams, startTeam);
     this.endedAtTick = 0;
     this.sendRoomState();
-    this.broadcast({ t: 'ev', e: 'kickoff' });
-    this.sysChat('Match started!');
+    this.broadcast({ t: 'ev', e: 'kickoff', team: startTeam });
+    this.sysChat(`Match started! ${TEAMS[startTeam].name} kicks off.`);
   }
 
   stop(m: Member): void {
@@ -190,6 +192,42 @@ class Room {
     this.sim = null;
     this.sendRoomState();
     this.sysChat('Match ended by the host.');
+  }
+
+  updateSettings(m: Member, msg: Extract<C2S, { t: 'settings' }>): void {
+    if (m.id !== this.hostId) {
+      send(m, { t: 'error', msg: 'Only the host can change settings.' });
+      return;
+    }
+    if (this.sim) {
+      send(m, { t: 'error', msg: 'Settings can only change between matches.' });
+      return;
+    }
+    const s = this.settings;
+    if (typeof msg.name === 'string') {
+      const name = cleanText(msg.name, ROOM.nameMax);
+      if (name) this.name = name;
+    }
+    if (typeof msg.isPublic === 'boolean') this.isPublic = msg.isPublic;
+    s.scoreLimit = clampInt(msg.scoreLimit, 0, 20, s.scoreLimit);
+    s.timeLimitMin = clampInt(msg.timeLimitMin, 0, 30, s.timeLimitMin);
+    s.maxPlayers = clampInt(
+      msg.maxPlayers,
+      Math.max(2, this.members.size),
+      ROOM.maxPlayersCap,
+      s.maxPlayers,
+    );
+    const newTeams = clampInt(msg.teams, 2, 4, s.teams);
+    if (newTeams !== s.teams) {
+      s.teams = newTeams;
+      // anyone on a team that no longer exists becomes a spectator
+      for (const member of this.members.values()) {
+        if (member.team >= newTeams) member.team = -1;
+      }
+    }
+    if (typeof msg.hotball === 'boolean') s.hotball = msg.hotball;
+    this.sendRoomState();
+    this.sysChat('Room settings updated.');
   }
 
   private wireEvent(ev: SimEvent): WireEvent {
@@ -207,7 +245,7 @@ class Room {
       case 'end':
         return { t: 'ev', e: 'end', winner: ev.winner };
       case 'kickoff':
-        return { t: 'ev', e: 'kickoff' };
+        return { t: 'ev', e: 'kickoff', team: ev.team };
     }
   }
 
@@ -271,6 +309,7 @@ class Room {
       s: [...sim.score],
       c: sim.clock,
       g: sim.golden ? 1 : 0,
+      ko: sim.kickoffTeam,
     };
     this.broadcast(msg);
   }
@@ -411,6 +450,10 @@ export class RoomManager {
       case 'leave':
         this.leaveRoom(m);
         send(m, { t: 'left' });
+        break;
+
+      case 'settings':
+        m.room?.updateSettings(m, msg);
         break;
 
       case 'team': {
