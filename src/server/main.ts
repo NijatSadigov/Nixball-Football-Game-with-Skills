@@ -1,18 +1,32 @@
 import { createServer } from 'node:http';
-import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import { TICK_MS } from '../shared/constants';
+import { accountsEnabled, config, logConfigSummary } from './config';
+import { handleApi } from './api';
+import { initDb } from './db';
 import { RoomManager } from './rooms';
 import { makeStaticHandler } from './static';
 
-const PORT = Number(process.env.PORT ?? 3000);
-const PUBLIC_DIR = process.env.PUBLIC_DIR ?? path.resolve(process.cwd(), 'dist/public');
+const staticHandler = makeStaticHandler(config.publicDir);
 
-const httpServer = createServer(makeStaticHandler(PUBLIC_DIR));
+const httpServer = createServer((req, res) => {
+  // API + Stripe webhook first; everything else is the static client
+  handleApi(req, res)
+    .then((handled) => {
+      if (!handled) staticHandler(req, res);
+    })
+    .catch((err) => {
+      console.error('request error', err);
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
+});
+
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 const manager = new RoomManager();
 
-wss.on('connection', (ws) => manager.handleConnection(ws));
+// pass the upgrade request so the connection can resolve its account cookie
+wss.on('connection', (ws, req) => manager.handleConnection(ws, req));
 
 // Fixed-rate simulation loop with catch-up (setInterval drift safe).
 let last = Date.now();
@@ -32,7 +46,19 @@ setInterval(() => {
 
 setInterval(() => manager.heartbeat(), 30_000);
 
-httpServer.listen(PORT, () => {
-  console.log(`NixBall server listening on http://localhost:${PORT}`);
-  console.log(`Serving client from: ${PUBLIC_DIR}`);
-});
+async function main(): Promise<void> {
+  if (accountsEnabled) {
+    try {
+      await initDb();
+    } catch (err) {
+      console.error('DB init failed — accounts/payments disabled for this run:', err);
+    }
+  }
+  httpServer.listen(config.port, () => {
+    console.log(`NixBall server listening on http://localhost:${config.port}`);
+    console.log(`Serving client from: ${config.publicDir}`);
+    logConfigSummary();
+  });
+}
+
+void main();

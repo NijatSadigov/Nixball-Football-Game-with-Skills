@@ -46,6 +46,19 @@ football in the browser. No accounts, no downloads.
 | Skill  | E or Q              |
 | Chat   | Enter               |
 
+On touch devices an on-screen analog stick (left) plus KICK and SKILL buttons
+(right) appear automatically during a match.
+
+## Shot effects (cosmetics)
+
+Each player picks a **shot effect** — the burst that plays at the ball on every
+kick. `Classic` is free; five premium effects (Inferno, Thunderstrike, Party
+Time, Earthshaker, Supernova) are $1 each. Effects are defined in
+[`src/shared/shotfx.ts`](src/shared/shotfx.ts) and rendered in
+[`src/client/render.ts`](src/client/render.ts) (`drawShot`). Ownership is
+currently stored in `localStorage` as a placeholder — the payment backend will
+replace it with verified, account-backed ownership.
+
 ## Development
 
 ```bash

@@ -1,3 +1,4 @@
+import type { IncomingMessage } from 'node:http';
 import type { WebSocket } from 'ws';
 import {
   END_PAUSE_TICKS,
@@ -8,6 +9,10 @@ import {
   TICK_RATE,
 } from '../shared/constants';
 import { isCharacterId } from '../shared/characters';
+import { getShotFx, isShotFxId } from '../shared/shotfx';
+import { accountsEnabled, paymentsEnabled } from './config';
+import { sessionCookieFrom } from './auth';
+import { ownedFx } from './db';
 import {
   addPlayerToSim,
   createMatch,
@@ -38,6 +43,9 @@ interface Member {
   name: string; // empty until 'hello'
   team: TeamOrSpec;
   charId: string;
+  shotFx: string;
+  accountId: number | null; // resolved from the session cookie, if any
+  owned: Set<string>; // premium fx this account owns (loaded from DB)
   room: Room | null;
   lastChatAt: number;
   alive: boolean;
@@ -100,6 +108,7 @@ class Room {
       name: m.name,
       team: m.team,
       charId: m.charId,
+      shotFx: m.shotFx,
     }));
   }
 
@@ -162,6 +171,18 @@ class Room {
       return;
     }
     m.charId = charId;
+    this.sendRoomState();
+  }
+
+  setFx(m: Member, fx: string): void {
+    if (!isShotFxId(fx)) return;
+    // when payments are live, premium effects require verified ownership;
+    // otherwise (dev/no-payments) any effect is allowed for local preview.
+    if (paymentsEnabled && getShotFx(fx).priceUsd > 0 && !m.owned.has(fx)) {
+      send(m, { t: 'error', msg: 'Buy this shot effect to equip it.' });
+      return;
+    }
+    m.shotFx = fx;
     this.sendRoomState();
   }
 
@@ -320,18 +341,34 @@ export class RoomManager {
   private conns = new Set<Member>();
   private tickCount = 0;
 
-  handleConnection(ws: WebSocket): void {
+  handleConnection(ws: WebSocket, req?: IncomingMessage): void {
     const m: Member = {
       id: nextConnId++,
       ws,
       name: '',
       team: -1,
       charId: 'classic',
+      shotFx: 'classic',
+      accountId: null,
+      owned: new Set(),
       room: null,
       lastChatAt: 0,
       alive: true,
     };
     this.conns.add(m);
+    // resolve the signed-in account from the cookie sent on the WS upgrade,
+    // then load which premium effects it owns (so setFx can be gated)
+    if (accountsEnabled && req) {
+      const accountId = sessionCookieFrom(req.headers.cookie);
+      if (accountId) {
+        m.accountId = accountId;
+        ownedFx(accountId)
+          .then((ids) => {
+            m.owned = new Set(ids);
+          })
+          .catch((err) => console.error('load owned fx failed', err));
+      }
+    }
     ws.on('pong', () => (m.alive = true));
     ws.on('message', (data) => {
       let msg: C2S;
@@ -468,6 +505,10 @@ export class RoomManager {
 
       case 'char':
         m.room?.setChar(m, String(msg.charId));
+        break;
+
+      case 'fx':
+        m.room?.setFx(m, String(msg.fx));
         break;
 
       case 'start':

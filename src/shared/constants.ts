@@ -1,6 +1,6 @@
 // All physics units are pixels and pixels-per-tick at a fixed 60 Hz simulation.
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 // After a goal the conceding team kicks off: everyone else is held outside
 // this radius around the center until the ball is touched.
@@ -39,12 +39,12 @@ export const BALL = {
 export const PLAYER = {
   damping: 0.96,
   restitution: 0.5,
-  kickRange: 7, // extra reach beyond radii contact for kicking
+  kickRange: 5, // extra reach beyond radii contact for kicking
   kickCooldownTicks: 10,
   kickAccelFactor: 0.65, // you accelerate slower while charging a kick
   // a kick press this recent still fires when the ball comes into range,
   // even if the button was already released (input buffering)
-  kickBufferTicks: 8,
+  kickBufferTicks: 5,
 };
 
 export const KICKOFF_PAUSE_TICKS = 150; // celebration pause after a goal (2.5 s)

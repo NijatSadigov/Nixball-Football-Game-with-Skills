@@ -117,12 +117,14 @@ export class GameView {
     const now = performance.now();
     switch (e.e) {
       case 'kick': {
-        const pos = this.latest ? { x: this.latest.b[0], y: this.latest.b[1] } : { x: 0, y: 0 };
-        this.effects.push({ kind: 'kick', x: pos.x, y: pos.y, t0: now });
+        const p = this.findPlayer(e.id);
+        const pos = p ?? (this.latest ? { x: this.latest.b[0], y: this.latest.b[1] } : { x: 0, y: 0 });
+        this.spawnShot(e.id, pos.x, pos.y, now);
         this.sfx.kick();
         break;
       }
       case 'perfect':
+        this.spawnShot(e.id, e.x, e.y, now);
         this.effects.push({ kind: 'perfect', x: e.x, y: e.y, t0: now });
         this.renderer.shake = 7;
         this.sfx.perfect();
@@ -167,6 +169,13 @@ export class GameView {
     if (!this.latest) return null;
     const p = this.latest.p.find((w) => w[0] === id);
     return p ? { x: p[1], y: p[2] } : null;
+  }
+
+  // spawn the shooter's chosen cosmetic shot effect at the ball
+  private spawnShot(id: number, x: number, y: number, now: number): void {
+    const style = this.roster.get(id)?.shotFx ?? 'classic';
+    this.effects.push({ kind: 'shot', x, y, t0: now, style, seed: Math.random() * Math.PI * 2 });
+    if (style === 'shock') this.renderer.shake = Math.max(this.renderer.shake, 5);
   }
 
   private setBanner(text: string, color = 'white', autoHideMs = 0): void {

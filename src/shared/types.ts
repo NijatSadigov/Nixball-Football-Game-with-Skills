@@ -17,6 +17,7 @@ export interface RoomMember {
   name: string;
   team: TeamOrSpec;
   charId: string;
+  shotFx: string;
 }
 
 export interface RoomListing {
@@ -58,6 +59,7 @@ export type C2S =
     }
   | { t: 'team'; team: TeamOrSpec }
   | { t: 'char'; charId: string }
+  | { t: 'fx'; fx: string }
   | { t: 'start' }
   | { t: 'stop' }
   | ({ t: 'input' } & InputState)

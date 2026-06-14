@@ -486,6 +486,83 @@ select:focus {
   color: var(--gold);
 }
 
+/* ---------- shot-effect picker ---------- */
+
+#fx-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.fx-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.fx-card:hover {
+  border-color: var(--muted);
+}
+
+.fx-card.selected {
+  border-color: var(--accent);
+}
+
+.fx-card.locked {
+  opacity: 0.85;
+}
+
+.fx-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.fx-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.fx-name {
+  font-weight: 700;
+  display: block;
+}
+
+.fx-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.fx-tag {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 99px;
+  flex: none;
+}
+
+.fx-tag.free {
+  background: var(--line);
+  color: var(--muted);
+}
+
+.fx-tag.owned {
+  background: #0f3d22;
+  color: var(--accent);
+}
+
+.fx-tag.price {
+  background: var(--gold);
+  color: #2a2300;
+}
+
 .lobby-bottom {
   display: grid;
   grid-template-columns: 1fr 240px;
@@ -541,6 +618,11 @@ select:focus {
 #screen-game {
   position: relative;
   overflow: hidden;
+}
+
+/* on touch devices the canvas shouldn't pan/zoom the page */
+body.is-touch #screen-game {
+  touch-action: none;
 }
 
 #game-canvas {
@@ -787,6 +869,81 @@ select:focus {
   border-radius: 99px;
   animation: fadeout 9s forwards;
   pointer-events: none;
+}
+
+body.is-touch #hud-hint {
+  display: none;
+}
+
+/* ---------- touch controls ---------- */
+
+#touch-controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+#touch-stick {
+  position: absolute;
+  left: 26px;
+  bottom: 26px;
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+  background: rgba(13, 18, 24, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+#touch-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  pointer-events: none;
+}
+
+#touch-buttons {
+  position: absolute;
+  right: 26px;
+  bottom: 26px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+#touch-buttons button {
+  pointer-events: auto;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  font-weight: 800;
+  touch-action: none;
+  user-select: none;
+}
+
+#touch-kick {
+  width: 96px;
+  height: 96px;
+  font-size: 17px;
+  background: rgba(74, 222, 128, 0.35);
+}
+
+#touch-skill {
+  width: 68px;
+  height: 68px;
+  font-size: 20px;
+  background: rgba(255, 228, 77, 0.3);
+}
+
+#touch-buttons button.pressed {
+  filter: brightness(1.5);
+  transform: scale(0.94);
 }
 
 /* ---------- dialog ---------- */

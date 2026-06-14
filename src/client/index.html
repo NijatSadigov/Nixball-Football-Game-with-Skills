@@ -55,6 +55,7 @@
               <input type="color" id="my-color" value="#00e5ff" />
               <button type="button" id="my-color-reset" class="ghost small">team</button>
             </label>
+            <span id="account-area" class="hidden"></span>
             <button id="btn-leave-lobby" class="ghost">Leave</button>
           </header>
 
@@ -62,6 +63,9 @@
 
           <h3 class="char-title">Choose your character</h3>
           <div id="char-row"></div>
+
+          <h3 class="char-title">Shot effect <span class="muted" style="font-size: 13px; font-weight: 400">— the burst when you kick</span></h3>
+          <div id="fx-row"></div>
 
           <div class="lobby-bottom">
             <div class="chat card">
@@ -106,6 +110,17 @@
             <button id="btn-leave-game" class="ghost small">Leave</button>
           </div>
           <div id="hud-hint">WASD move · X/Space kick · E skill · Enter chat</div>
+
+          <!-- touch controls (shown only on touch devices) -->
+          <div id="touch-controls" class="hidden">
+            <div id="touch-stick">
+              <div id="touch-knob"></div>
+            </div>
+            <div id="touch-buttons">
+              <button id="touch-skill" type="button">E</button>
+              <button id="touch-kick" type="button">KICK</button>
+            </div>
+          </div>
         </div>
       </section>
     </div>

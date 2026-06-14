@@ -1,10 +1,21 @@
 import { PROTOCOL_VERSION, TEAMS } from '../shared/constants';
 import { CHARACTERS, getCharacter } from '../shared/characters';
+import { SHOT_FX } from '../shared/shotfx';
 import type { RoomListing, RoomStateMsg, TeamOrSpec } from '../shared/types';
+import {
+  logout,
+  me,
+  ownsServerSide,
+  refreshMe,
+  requestLogin,
+  startCheckout,
+} from './account';
 import { GameView } from './game';
 import { InputManager } from './input';
 import { Net } from './net';
+import { isOwned as isOwnedLocal, markOwned } from './shop';
 import { Sfx } from './sound';
+import { isTouchDevice, TouchControls } from './touch';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -33,6 +44,8 @@ const els = {
   btnLeaveLobby: $<HTMLButtonElement>('btn-leave-lobby'),
   teamsArea: $('teams-area'),
   charRow: $('char-row'),
+  fxRow: $('fx-row'),
+  accountArea: $('account-area'),
   chatLog: $('chat-log'),
   chatForm: $<HTMLFormElement>('chat-form'),
   chatInput: $<HTMLInputElement>('chat-input'),
@@ -286,7 +299,7 @@ function renderLobby(): void {
   els.lobbyCode.textContent = room.code;
   renderSettingsLine(room);
 
-  const me = room.members.find((m) => m.id === myId);
+  const meMember = room.members.find((m) => m.id === myId);
 
   // one column per team plus spectators
   els.teamsArea.innerHTML = '';
@@ -307,12 +320,14 @@ function renderLobby(): void {
       if (m.team === col.team) ul.appendChild(memberChip(m, room.host));
     }
     const btn = joinTeamButton(col.team, col.team === -1 ? 'Spectate' : `Join ${col.label}`);
-    btn.disabled = me ? me.team === col.team : false;
+    btn.disabled = meMember ? meMember.team === col.team : false;
     div.append(h, ul, btn);
     els.teamsArea.appendChild(div);
   }
 
-  renderCharRow(me?.charId ?? 'classic');
+  renderCharRow(meMember?.charId ?? 'classic');
+  renderFxRow(meMember?.shotFx ?? 'classic');
+  renderAccountArea();
 
   const isHost = room.host === myId;
   const teamPlayers = room.members.filter((m) => m.team !== -1).length;
@@ -344,6 +359,109 @@ function renderCharRow(selectedId: string): void {
         : `<div class="char-skill muted">No skill. Pure football.</div>`);
     card.addEventListener('click', () => net.send({ t: 'char', charId: c.id }));
     els.charRow.appendChild(card);
+  }
+}
+
+// owns = free, OR purchased (server-verified when payments live; localStorage in dev)
+function ownsFx(id: string): boolean {
+  return me().paymentsEnabled ? ownsServerSide(id) : isOwnedLocal(id);
+}
+
+function renderFxRow(selectedId: string): void {
+  els.fxRow.innerHTML = '';
+  for (const f of SHOT_FX) {
+    const owned = ownsFx(f.id);
+    const card = document.createElement('div');
+    card.className =
+      'fx-card' + (f.id === selectedId ? ' selected' : '') + (owned ? '' : ' locked');
+    const tag = owned
+      ? f.priceUsd === 0
+        ? '<span class="fx-tag free">Free</span>'
+        : '<span class="fx-tag owned">Owned</span>'
+      : `<span class="fx-tag price">$${f.priceUsd}</span>`;
+    card.innerHTML =
+      `<span class="fx-swatch" style="background:${f.color}"></span>` +
+      `<div class="fx-info"><span class="fx-name">${f.name}</span><span class="fx-desc">${f.desc}</span></div>` +
+      tag;
+    card.addEventListener('click', () => {
+      if (owned) {
+        net.send({ t: 'fx', fx: f.id });
+      } else {
+        void openPurchase(f.id);
+      }
+    });
+    els.fxRow.appendChild(card);
+  }
+}
+
+async function openPurchase(fxId: string): Promise<void> {
+  const fx = SHOT_FX.find((f) => f.id === fxId);
+  if (!fx) return;
+
+  // Payments live: route through Stripe Checkout (requires sign-in).
+  if (me().paymentsEnabled) {
+    if (!me().signedIn) {
+      promptSignIn(`Sign in to buy ${fx.name} ($${fx.priceUsd}).`);
+      return;
+    }
+    toast('Opening secure checkout…');
+    const url = await startCheckout(fxId);
+    if (url) window.location.assign(url);
+    else toast('Could not start checkout. Try again.');
+    return;
+  }
+
+  // Payments not configured: local preview unlock so the visual is usable.
+  const ok = window.confirm(
+    `${fx.name} — $${fx.priceUsd}\n\n${fx.desc}\n\nPayments aren't enabled on this server. ` +
+      `Preview this effect locally? (Unlocks only on this device.)`,
+  );
+  if (ok) {
+    markOwned(fxId);
+    net.send({ t: 'fx', fx: fxId });
+    toast(`${fx.name} unlocked (preview)`);
+    if (currentRoom) renderFxRow(fxId);
+  }
+}
+
+function promptSignIn(reason: string): void {
+  const email = window.prompt(`${reason}\n\nEnter your email — we'll send a sign-in link:`);
+  if (!email) return;
+  void requestLogin(email.trim()).then((ok) => {
+    toast(ok ? 'Check your email for the sign-in link.' : 'Could not send the link. Try again.');
+  });
+}
+
+// Sign-in status shown in the lobby header (only when accounts are enabled).
+function renderAccountArea(): void {
+  const area = els.accountArea;
+  const s = me();
+  if (!s.accountsEnabled) {
+    area.classList.add('hidden');
+    return;
+  }
+  area.classList.remove('hidden');
+  area.innerHTML = '';
+  if (s.signedIn) {
+    const who = document.createElement('span');
+    who.className = 'muted';
+    who.style.fontSize = '13px';
+    who.textContent = s.email ?? 'signed in';
+    const out = document.createElement('button');
+    out.className = 'ghost small';
+    out.textContent = 'Sign out';
+    out.addEventListener('click', async () => {
+      await logout();
+      renderAccountArea();
+      if (currentRoom) renderLobby();
+    });
+    area.append(who, out);
+  } else {
+    const inBtn = document.createElement('button');
+    inBtn.className = 'ghost small';
+    inBtn.textContent = 'Sign in';
+    inBtn.addEventListener('click', () => promptSignIn('Sign in to NixBall.'));
+    area.appendChild(inBtn);
   }
 }
 
@@ -425,6 +543,16 @@ input.onChatToggle = () => {
   els.hudChatInput.focus();
 };
 
+// touch controls (mobile): feed the same input pipeline
+const touch = isTouchDevice()
+  ? new TouchControls({
+      onDir: (dir) => input.setTouchDir(dir),
+      onKick: (down) => input.setKick(down),
+      onSkill: () => net.send({ t: 'skill' }),
+    })
+  : null;
+if (touch) document.body.classList.add('is-touch');
+
 // ---------- net handlers ----------
 
 net.onOpen(() => {
@@ -451,8 +579,8 @@ net.on('room', (msg) => {
   myId = msg.you;
   history.replaceState(null, '', '#' + msg.code);
 
-  const me = msg.members.find((m) => m.id === myId);
-  if (me) rejoinTeam = me.team;
+  const meMember = msg.members.find((m) => m.id === myId);
+  if (meMember) rejoinTeam = meMember.team;
 
   if (msg.phase === 'match') {
     show('game');
@@ -461,6 +589,8 @@ net.on('room', (msg) => {
     gameView.start();
     input.enabled = true;
     els.btnStop.classList.toggle('hidden', msg.host !== myId);
+    // touch controls only when actually playing (not spectating)
+    touch?.setVisible(meMember ? meMember.team !== -1 : true);
     // spectator quick-join buttons, one per team in this mode
     els.hudSpectateBtns.innerHTML = '';
     for (let i = 0; i < msg.settings.teams; i++) {
@@ -474,6 +604,7 @@ net.on('room', (msg) => {
     gameView.stop();
     input.enabled = false;
     input.releaseAll();
+    touch?.setVisible(false);
     show('lobby');
     renderLobby();
     if (!wasInRoom) els.chatLog.innerHTML = '';
@@ -550,5 +681,27 @@ if (hashCode.length === 5) {
   els.joinCode.value = hashCode;
 }
 
+// account + purchase status, and messages from the Stripe / magic-link redirects
+async function bootAccount(): Promise<void> {
+  await refreshMe();
+  const params = new URLSearchParams(location.search);
+  const purchased = params.get('purchased');
+  if (purchased) {
+    // the webhook may land a beat after redirect; refresh once more shortly
+    setTimeout(() => void refreshMe().then(() => currentRoom && renderLobby()), 1500);
+    toast('Purchase complete — effect unlocked!');
+  } else if (params.get('canceled')) {
+    toast('Checkout canceled.');
+  } else if (params.get('signedin')) {
+    toast('Signed in!');
+  } else if (params.get('login') === 'expired') {
+    toast('That sign-in link expired. Try again.');
+  }
+  if (location.search) history.replaceState(null, '', location.pathname + location.hash);
+  if (currentRoom) renderLobby();
+  renderAccountArea();
+}
+
 show('home');
 net.connect();
+void bootAccount();

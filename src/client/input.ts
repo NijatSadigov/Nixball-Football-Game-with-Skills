@@ -52,6 +52,28 @@ export class InputManager {
     }
   }
 
+  // --- touch controls feed into the same input state ---
+
+  setTouchDir(dir: Pick<InputState, 'up' | 'down' | 'left' | 'right'>): void {
+    if (!this.enabled) return;
+    let changed = false;
+    for (const k of ['up', 'down', 'left', 'right'] as const) {
+      if (this.state[k] !== dir[k]) {
+        this.state[k] = dir[k];
+        changed = true;
+      }
+    }
+    if (changed) this.onChange?.({ ...this.state });
+  }
+
+  setKick(down: boolean): void {
+    if (!this.enabled) return;
+    if (this.state.kick !== down) {
+      this.state.kick = down;
+      this.onChange?.({ ...this.state });
+    }
+  }
+
   releaseAll(): void {
     if (Object.values(this.state).some(Boolean)) {
       this.state = emptyInput();

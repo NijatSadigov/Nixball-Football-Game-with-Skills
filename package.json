@@ -11,17 +11,20 @@
     "dev:server": "tsx watch src/server/main.ts",
     "dev:client": "vite",
     "build": "vite build && npm run build:server",
-    "build:server": "esbuild src/server/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/server.cjs --external:bufferutil --external:utf-8-validate",
+    "build:server": "esbuild src/server/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/server.cjs --external:bufferutil --external:utf-8-validate --external:pg-native",
     "start": "node dist/server.cjs",
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/test-physics.ts",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
+    "pg": "^8.13.1",
+    "stripe": "^17.5.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
     "@types/ws": "^8.5.13",
     "concurrently": "^9.1.0",
     "esbuild": "^0.24.0",
