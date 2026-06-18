@@ -174,13 +174,24 @@ class Room {
     this.sendRoomState();
   }
 
-  setFx(m: Member, fx: string): void {
+  async setFx(m: Member, fx: string): Promise<void> {
     if (!isShotFxId(fx)) return;
     // when payments are live, premium effects require verified ownership;
     // otherwise (dev/no-payments) any effect is allowed for local preview.
     if (paymentsEnabled && getShotFx(fx).priceUsd > 0 && !m.owned.has(fx)) {
-      send(m, { t: 'error', msg: 'Buy this shot effect to equip it.' });
-      return;
+      // they may have just purchased it — reload ownership from the DB (the
+      // cached set was loaded when they connected) before refusing.
+      if (m.accountId) {
+        try {
+          m.owned = new Set(await ownedFx(m.accountId));
+        } catch (err) {
+          console.error('reload owned fx failed', err);
+        }
+      }
+      if (!m.owned.has(fx)) {
+        send(m, { t: 'error', msg: 'Buy this shot effect to equip it.' });
+        return;
+      }
     }
     m.shotFx = fx;
     this.sendRoomState();
@@ -508,7 +519,7 @@ export class RoomManager {
         break;
 
       case 'fx':
-        m.room?.setFx(m, String(msg.fx));
+        void m.room?.setFx(m, String(msg.fx));
         break;
 
       case 'start':
