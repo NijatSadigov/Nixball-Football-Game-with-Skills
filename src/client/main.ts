@@ -695,7 +695,7 @@ async function bootAccount(): Promise<void> {
   } else if (params.get('signedin')) {
     toast('Signed in!');
   } else if (params.get('login') === 'expired') {
-    toast('That sign-in link expired. Try again.');
+    toast('That sign-in link is invalid or expired — request a new one.');
   }
   if (location.search) history.replaceState(null, '', location.pathname + location.hash);
   if (currentRoom) renderLobby();

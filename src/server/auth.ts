@@ -6,7 +6,7 @@ import { config } from './config';
 import { consumeLoginToken, saveLoginToken, upsertAccount } from './db';
 import { sendMagicLink } from './mailer';
 
-const TOKEN_TTL_MS = 15 * 60 * 1000; // magic link valid 15 min
+const TOKEN_TTL_MS = 30 * 60 * 1000; // magic link valid 30 min
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // session valid 30 days
 export const SESSION_COOKIE = 'nb_session';
 
@@ -69,9 +69,15 @@ export async function requestMagicLink(rawEmail: string): Promise<void> {
 
 // Verify a magic-link token; returns a session cookie value (or null).
 export async function verifyMagicLink(token: string): Promise<string | null> {
-  if (!token || token.length > 100) return null;
-  const email = await consumeLoginToken(token);
-  if (!email) return null;
-  const accountId = await upsertAccount(email);
+  if (!token || token.length > 100) {
+    console.log('magic link verify failed: malformed token');
+    return null;
+  }
+  const result = await consumeLoginToken(token);
+  if (!result.ok) {
+    console.log(`magic link verify failed: ${result.reason} (token length ${token.length})`);
+    return null;
+  }
+  const accountId = await upsertAccount(result.email);
   return makeSession(accountId);
 }

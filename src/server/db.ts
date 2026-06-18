@@ -95,14 +95,23 @@ export async function saveLoginToken(token: string, email: string, expiresAt: Da
   ]);
 }
 
-// Consume a token: returns the email if valid & unused & unexpired, else null.
-export async function consumeLoginToken(token: string): Promise<string | null> {
+export type ConsumeResult =
+  | { ok: true; email: string }
+  | { ok: false; reason: 'notfound' | 'expired' };
+
+// Validate a login token. Expiry is checked against the Node clock (the same
+// clock that SET expires_at) to avoid host/DB clock-skew false-expiries. The
+// link stays usable for its whole window so a double-click or a browser/email
+// prefetch doesn't burn it; we still flag it used for later cleanup.
+export async function consumeLoginToken(token: string): Promise<ConsumeResult> {
   const p = getPool();
-  const res = await p.query<{ email: string }>(
-    `UPDATE login_tokens SET used = true
-     WHERE token = $1 AND used = false AND expires_at > now()
-     RETURNING email`,
+  const res = await p.query<{ email: string; expires_at: Date }>(
+    `SELECT email, expires_at FROM login_tokens WHERE token = $1`,
     [token],
   );
-  return res.rows[0]?.email ?? null;
+  const row = res.rows[0];
+  if (!row) return { ok: false, reason: 'notfound' };
+  if (new Date(row.expires_at).getTime() < Date.now()) return { ok: false, reason: 'expired' };
+  await p.query(`UPDATE login_tokens SET used = true WHERE token = $1`, [token]);
+  return { ok: true, email: row.email };
 }
