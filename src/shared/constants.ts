@@ -1,6 +1,6 @@
 // All physics units are pixels and pixels-per-tick at a fixed 60 Hz simulation.
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 // After a goal the conceding team kicks off: everyone else is held outside
 // this radius around the center until the ball is touched.
@@ -34,6 +34,13 @@ export const BALL = {
   radius: 10,
   damping: 0.99,
   invMass: 1.2,
+  // Ball-vs-player feel (Haxball-like). Players strongly resist the ball so it
+  // barely shoves them, and the bounce ramps in with approach speed: slow
+  // contacts let you settle / dribble the ball, only a fast ball bumps off.
+  playerResist: 0.22, // player invMass is scaled by this during ball collisions
+  bumpMinSpeed: 2.6, // below this approach speed there is no bounce (e = 0)
+  bumpMaxSpeed: 8, // at/above this, full bounce
+  bumpRestitution: 0.5, // max restitution, reached at bumpMaxSpeed
 };
 
 export const PLAYER = {

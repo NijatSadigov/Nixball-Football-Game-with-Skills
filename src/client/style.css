@@ -399,6 +399,12 @@ select:focus {
   outline: 1px solid var(--accent);
 }
 
+.member-chip .admin-btn {
+  margin-left: auto;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
 .char-title {
   margin: 4px 0 0;
 }

@@ -426,6 +426,49 @@ function collide(
   return true;
 }
 
+// Ball vs player, Haxball-style. The player resists the ball (its inverse mass
+// is scaled down) so the ball barely shoves players, and the restitution ramps
+// in with the approach speed — slow touches settle/dribble the ball, only a
+// fast ball bumps off. Returns true on contact.
+function collideBallPlayer(p: SimPlayer, b: Disc, pr: number, pInvMass: number): boolean {
+  let dx = b.x - p.x;
+  let dy = b.y - p.y;
+  let d = Math.hypot(dx, dy);
+  const min = pr + BALL.radius;
+  if (d >= min) return false;
+  if (d < 1e-6) {
+    dx = 1;
+    dy = 0;
+    d = 1;
+  }
+  const nx = dx / d;
+  const ny = dy / d;
+  const ia = pInvMass * BALL.playerResist;
+  const ib = BALL.invMass;
+  const total = ia + ib;
+  if (total <= 0) return false;
+  const overlap = min - d;
+  p.x -= nx * overlap * (ia / total);
+  p.y -= ny * overlap * (ia / total);
+  b.x += nx * overlap * (ib / total);
+  b.y += ny * overlap * (ib / total);
+  const rv = (b.vx - p.vx) * nx + (b.vy - p.vy) * ny;
+  if (rv < 0) {
+    const speed = -rv;
+    const ramp = Math.min(
+      1,
+      Math.max(0, (speed - BALL.bumpMinSpeed) / (BALL.bumpMaxSpeed - BALL.bumpMinSpeed)),
+    );
+    const e = BALL.bumpRestitution * ramp;
+    const j = (-(1 + e) * rv) / total;
+    p.vx -= nx * j * ia;
+    p.vy -= ny * j * ia;
+    b.vx += nx * j * ib;
+    b.vy += ny * j * ib;
+  }
+  return true;
+}
+
 // Collision against an immovable circle (goal posts).
 function collideStatic(d: Disc, r: number, px: number, py: number, pr: number, e: number): void {
   let dx = d.x - px;
@@ -783,7 +826,7 @@ export function stepMatch(
     }
   }
   for (const p of state.players) {
-    const touched = collide(p, b, playerRadius(p, t), BALL.radius, playerInvMass(p, t), BALL.invMass, 0.5);
+    const touched = collideBallPlayer(p, b, playerRadius(p, t), playerInvMass(p, t));
     if (touched) noteTouch(state, p.team);
   }
   for (const goal of geom.goals) {

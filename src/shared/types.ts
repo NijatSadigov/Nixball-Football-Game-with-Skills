@@ -18,6 +18,7 @@ export interface RoomMember {
   team: TeamOrSpec;
   charId: string;
   shotFx: string;
+  admin: boolean; // host or granted admin: can start/stop, change settings, promote
 }
 
 export interface RoomListing {
@@ -60,6 +61,7 @@ export type C2S =
   | { t: 'team'; team: TeamOrSpec }
   | { t: 'char'; charId: string }
   | { t: 'fx'; fx: string }
+  | { t: 'admin'; target: number; grant: boolean }
   | { t: 'start' }
   | { t: 'stop' }
   | ({ t: 'input' } & InputState)

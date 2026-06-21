@@ -1,7 +1,7 @@
 import { PROTOCOL_VERSION, TEAMS } from '../shared/constants';
 import { CHARACTERS, getCharacter } from '../shared/characters';
 import { SHOT_FX } from '../shared/shotfx';
-import type { RoomListing, RoomStateMsg, TeamOrSpec } from '../shared/types';
+import type { RoomListing, RoomMember, RoomStateMsg, TeamOrSpec } from '../shared/types';
 import {
   logout,
   me,
@@ -231,13 +231,30 @@ setInterval(() => {
 
 // ---------- lobby ----------
 
-function memberChip(member: { id: number; name: string; charId: string }, hostId: number): HTMLLIElement {
+function memberChip(member: RoomMember, room: RoomStateMsg): HTMLLIElement {
   const li = document.createElement('li');
   li.className = 'member-chip' + (member.id === myId ? ' me' : '');
   const char = getCharacter(member.charId);
-  li.innerHTML =
+  const isHost = member.id === room.host;
+  // 👑 host, ★ admin
+  const badge = isHost ? ' 👑' : member.admin ? ' ★' : '';
+  const label = document.createElement('span');
+  label.innerHTML =
     `<span class="dot" style="background:${char.color}"></span>` +
-    `<span>${escapeHtml(member.name)}${member.id === hostId ? ' 👑' : ''}</span>`;
+    `${escapeHtml(member.name)}${badge}`;
+  li.appendChild(label);
+
+  // admins can promote/demote anyone who isn't the host (and isn't themselves)
+  const iAmAdmin = room.members.find((p) => p.id === myId)?.admin;
+  if (iAmAdmin && member.id !== myId && !isHost) {
+    const b = document.createElement('button');
+    b.className = 'ghost small admin-btn';
+    b.textContent = member.admin ? 'Remove admin' : 'Make admin';
+    b.addEventListener('click', () =>
+      net.send({ t: 'admin', target: member.id, grant: !member.admin }),
+    );
+    li.appendChild(b);
+  }
   return li;
 }
 
@@ -264,8 +281,9 @@ function sendSettings(): void {
 }
 
 function renderSettingsLine(room: RoomStateMsg): void {
-  if (room.host === myId) {
-    // host edits settings right here; changes apply to the next match
+  const iAmAdmin = room.members.find((m) => m.id === myId)?.admin ?? false;
+  if (iAmAdmin) {
+    // admins edit settings right here; changes apply to the next match
     const s = room.settings;
     const teamOpts = [2, 3, 4]
       .map((n) => `<option value="${n}" ${s.teams === n ? 'selected' : ''}>${n}</option>`)
@@ -317,7 +335,7 @@ function renderLobby(): void {
     h.style.color = col.color ?? 'var(--muted)';
     const ul = document.createElement('ul');
     for (const m of room.members) {
-      if (m.team === col.team) ul.appendChild(memberChip(m, room.host));
+      if (m.team === col.team) ul.appendChild(memberChip(m, room));
     }
     const btn = joinTeamButton(col.team, col.team === -1 ? 'Spectate' : `Join ${col.label}`);
     btn.disabled = meMember ? meMember.team === col.team : false;
@@ -329,15 +347,15 @@ function renderLobby(): void {
   renderFxRow(meMember?.shotFx ?? 'classic');
   renderAccountArea();
 
-  const isHost = room.host === myId;
+  const iAmAdmin = meMember?.admin ?? false;
   const teamPlayers = room.members.filter((m) => m.team !== -1).length;
-  els.btnStart.classList.toggle('hidden', !isHost);
-  if (isHost) {
+  els.btnStart.classList.toggle('hidden', !iAmAdmin);
+  if (iAmAdmin) {
     els.btnStart.disabled = teamPlayers === 0;
     els.startHint.textContent =
       teamPlayers === 0 ? 'Someone must join a team first' : `${teamPlayers} player(s) ready`;
   } else {
-    els.startHint.textContent = 'Waiting for the host to start…';
+    els.startHint.textContent = 'Waiting for an admin to start…';
   }
 }
 
@@ -588,7 +606,7 @@ net.on('room', (msg) => {
     gameView.setRoster(msg.members, myId);
     gameView.start();
     input.enabled = true;
-    els.btnStop.classList.toggle('hidden', msg.host !== myId);
+    els.btnStop.classList.toggle('hidden', !meMember?.admin);
     // touch controls only when actually playing (not spectating)
     touch?.setVisible(meMember ? meMember.team !== -1 : true);
     // spectator quick-join buttons, one per team in this mode

@@ -77,6 +77,7 @@ class Room {
   settings: RoomSettings;
   members = new Map<number, Member>();
   hostId = 0;
+  admins = new Set<number>(); // extra admins granted by the host/another admin
   sim: SimState | null = null;
   private endedAtTick = 0;
 
@@ -89,6 +90,10 @@ class Room {
 
   get phase(): 'lobby' | 'match' {
     return this.sim ? 'match' : 'lobby';
+  }
+
+  isAdmin(id: number): boolean {
+    return id === this.hostId || this.admins.has(id);
   }
 
   broadcast(msg: S2C): void {
@@ -109,6 +114,7 @@ class Room {
       team: m.team,
       charId: m.charId,
       shotFx: m.shotFx,
+      admin: this.isAdmin(m.id),
     }));
   }
 
@@ -140,16 +146,33 @@ class Room {
 
   removeMember(m: Member): void {
     this.members.delete(m.id);
+    this.admins.delete(m.id);
     m.room = null;
     if (this.sim) removePlayerFromSim(this.sim, m.id);
     if (this.members.size === 0) return; // manager deletes the room
     if (this.hostId === m.id) {
-      this.hostId = this.members.keys().next().value!;
+      // hand the room to an existing admin if there is one, else the next member
+      this.hostId = [...this.admins].find((id) => this.members.has(id)) ?? this.members.keys().next().value!;
+      this.admins.delete(this.hostId);
       const newHost = this.members.get(this.hostId);
       this.sysChat(`${newHost?.name} is now the host`);
     }
     this.sendRoomState();
     this.sysChat(`${m.name} left the room`);
+  }
+
+  setAdmin(m: Member, targetId: number, grant: boolean): void {
+    if (!this.isAdmin(m.id)) {
+      send(m, { t: 'error', msg: 'Only an admin can change admins.' });
+      return;
+    }
+    if (targetId === this.hostId) return; // the host is always an admin
+    const target = this.members.get(targetId);
+    if (!target) return;
+    if (grant) this.admins.add(targetId);
+    else this.admins.delete(targetId);
+    this.sendRoomState();
+    this.sysChat(`${target.name} is ${grant ? 'now an admin' : 'no longer an admin'}.`);
   }
 
   setTeam(m: Member, team: TeamOrSpec): void {
@@ -198,8 +221,8 @@ class Room {
   }
 
   start(m: Member): void {
-    if (m.id !== this.hostId) {
-      send(m, { t: 'error', msg: 'Only the host can start the match.' });
+    if (!this.isAdmin(m.id)) {
+      send(m, { t: 'error', msg: 'Only an admin can start the match.' });
       return;
     }
     if (this.sim) return;
@@ -220,15 +243,15 @@ class Room {
   }
 
   stop(m: Member): void {
-    if (m.id !== this.hostId || !this.sim) return;
+    if (!this.isAdmin(m.id) || !this.sim) return;
     this.sim = null;
     this.sendRoomState();
-    this.sysChat('Match ended by the host.');
+    this.sysChat('Match ended by an admin.');
   }
 
   updateSettings(m: Member, msg: Extract<C2S, { t: 'settings' }>): void {
-    if (m.id !== this.hostId) {
-      send(m, { t: 'error', msg: 'Only the host can change settings.' });
+    if (!this.isAdmin(m.id)) {
+      send(m, { t: 'error', msg: 'Only an admin can change settings.' });
       return;
     }
     if (this.sim) {
@@ -520,6 +543,12 @@ export class RoomManager {
 
       case 'fx':
         void m.room?.setFx(m, String(msg.fx));
+        break;
+
+      case 'admin':
+        if (m.room && typeof msg.target === 'number') {
+          m.room.setAdmin(m, msg.target, msg.grant === true);
+        }
         break;
 
       case 'start':

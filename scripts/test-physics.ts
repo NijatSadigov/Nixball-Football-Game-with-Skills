@@ -346,4 +346,34 @@ function shootIntoGoal(
   assert.ok(p.skillCooldownUntil > s.tick, 'cooldown started on expiry');
 }
 
+// --- 18. ball bumps players only when fast (Haxball-like feel) ---
+{
+  // slow ball into a still player: barely bounces, barely pushes
+  const slow = createMatch([{ id: 1, team: 0, charId: 'classic' }]);
+  slow.players[0].x = 0;
+  slow.players[0].y = 0;
+  slow.ball.x = 21; // overlapping the player (min radius 25)
+  slow.ball.y = 0;
+  slow.ball.vx = -1.6; // gentle approach (below bumpMinSpeed)
+  stepMatch(slow, cfg, noJitter);
+  const slowBounce = slow.ball.vx;
+  const slowPush = Math.abs(slow.players[0].vx);
+
+  // fast ball into a still player: bounces back, pushes a bit
+  const fast = createMatch([{ id: 1, team: 0, charId: 'classic' }]);
+  fast.players[0].x = 0;
+  fast.players[0].y = 0;
+  fast.ball.x = 21;
+  fast.ball.y = 0;
+  fast.ball.vx = -9;
+  stepMatch(fast, cfg, noJitter);
+  const fastBounce = fast.ball.vx;
+  const fastPush = Math.abs(fast.players[0].vx);
+
+  assert.ok(slowBounce <= 0.5, `slow ball doesn't ping off (vx=${slowBounce.toFixed(2)})`);
+  assert.ok(fastBounce > 1.5, `fast ball bounces back (vx=${fastBounce.toFixed(2)})`);
+  assert.ok(fastPush > slowPush, 'a fast ball pushes the player more than a slow one');
+  assert.ok(slowPush < 0.5, `slow ball barely moves the player (push=${slowPush.toFixed(2)})`);
+}
+
 console.log('physics tests: all OK');
