@@ -91,6 +91,31 @@ journalctl -u nixball -n 20   # check "accounts: ENABLED" / "payments: ENABLED (
 3. You're redirected back; the effect shows **Owned** and is equippable. Confirm
    the row landed in `purchases`.
 
+## Promo codes
+
+Players can redeem a promo code in the lobby (under "Shot effect") to unlock
+effects for free — handy for giveaways, testers, or unlocking skins while the
+webhook is still being set up. Codes live in the `promo_codes` table; create
+them with psql:
+
+```bash
+# a code that unlocks one effect (Inferno), unlimited uses
+sudo docker exec nixball-db psql -U nixball -d nixball -c \
+  "INSERT INTO promo_codes (code, fx_id) VALUES ('WELCOME', 'flame');"
+
+# a code that unlocks ALL premium effects, limited to 50 uses
+sudo docker exec nixball-db psql -U nixball -d nixball -c \
+  "INSERT INTO promo_codes (code, fx_id, max_uses) VALUES ('FOUNDER', 'all', 50);"
+```
+
+- `fx_id` is a shot-effect id (`flame`, `bolt`, `confetti`, `shock`, `nova`) or
+  `all` for every premium effect.
+- `max_uses` NULL = unlimited; each code can be redeemed once per account.
+- Disable a code: `UPDATE promo_codes SET active = false WHERE code = 'WELCOME';`
+
+Redeeming requires the player to be signed in (the unlock is tied to their
+account, so it follows them across devices).
+
 ## Going live
 
 - Swap the test keys for **live** keys and re-create the webhook in live mode.

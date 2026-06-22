@@ -80,3 +80,28 @@ export async function startCheckout(fxId: string): Promise<string | null> {
 export function ownsServerSide(fxId: string): boolean {
   return getShotFx(fxId).priceUsd === 0 || state.owned.includes(fxId);
 }
+
+export interface RedeemResult {
+  ok: boolean;
+  granted?: string[];
+  error?: string;
+}
+
+export async function redeemPromo(code: string): Promise<RedeemResult> {
+  try {
+    const res = await fetch('/api/redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      await refreshMe(); // pull the newly granted ownership
+      return { ok: true, granted: data.granted };
+    }
+    return { ok: false, error: data.error ?? 'failed' };
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+}

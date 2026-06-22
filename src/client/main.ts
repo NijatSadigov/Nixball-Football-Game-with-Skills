@@ -6,10 +6,12 @@ import {
   logout,
   me,
   ownsServerSide,
+  redeemPromo,
   refreshMe,
   requestLogin,
   startCheckout,
 } from './account';
+import { paintShot, shotDuration } from './shotpaint';
 import { GameView } from './game';
 import { InputManager } from './input';
 import { Net } from './net';
@@ -45,6 +47,10 @@ const els = {
   teamsArea: $('teams-area'),
   charRow: $('char-row'),
   fxRow: $('fx-row'),
+  fxRedeem: $('fx-redeem'),
+  redeemCode: $<HTMLInputElement>('redeem-code'),
+  redeemBtn: $<HTMLButtonElement>('redeem-btn'),
+  redeemMsg: $('redeem-msg'),
   accountArea: $('account-area'),
   chatLog: $('chat-log'),
   chatForm: $<HTMLFormElement>('chat-form'),
@@ -59,6 +65,13 @@ const els = {
   hudSpectateBtns: $('hud-spectate-btns'),
   btnStop: $<HTMLButtonElement>('btn-stop'),
   btnLeaveGame: $<HTMLButtonElement>('btn-leave-game'),
+
+  authDialog: $<HTMLDialogElement>('auth-dialog'),
+  authForm: $<HTMLFormElement>('auth-form'),
+  authEmail: $<HTMLInputElement>('auth-email'),
+  authSub: $('auth-sub'),
+  authMsg: $('auth-msg'),
+  authCancel: $<HTMLButtonElement>('auth-cancel'),
 
   createDialog: $<HTMLDialogElement>('create-dialog'),
   createForm: $<HTMLFormElement>('create-form'),
@@ -346,6 +359,7 @@ function renderLobby(): void {
   renderCharRow(meMember?.charId ?? 'classic');
   renderFxRow(meMember?.shotFx ?? 'classic');
   renderAccountArea();
+  els.fxRedeem.classList.toggle('hidden', !me().accountsEnabled);
 
   const iAmAdmin = meMember?.admin ?? false;
   const teamPlayers = room.members.filter((m) => m.team !== -1).length;
@@ -398,7 +412,7 @@ function renderFxRow(selectedId: string): void {
         : '<span class="fx-tag owned">Owned</span>'
       : `<span class="fx-tag price">$${f.priceUsd}</span>`;
     card.innerHTML =
-      `<span class="fx-swatch" style="background:${f.color}"></span>` +
+      `<canvas class="fx-preview" width="120" height="120" data-style="${f.id}"></canvas>` +
       `<div class="fx-info"><span class="fx-name">${f.name}</span><span class="fx-desc">${f.desc}</span></div>` +
       tag;
     card.addEventListener('click', () => {
@@ -419,7 +433,7 @@ async function openPurchase(fxId: string): Promise<void> {
   // Payments live: route through Stripe Checkout (requires sign-in).
   if (me().paymentsEnabled) {
     if (!me().signedIn) {
-      promptSignIn(`Sign in to buy ${fx.name} ($${fx.priceUsd}).`);
+      openAuthDialog(`Sign in to buy ${fx.name} ($${fx.priceUsd}) — your purchase then works on any device.`);
       return;
     }
     toast('Opening secure checkout…');
@@ -442,13 +456,115 @@ async function openPurchase(fxId: string): Promise<void> {
   }
 }
 
-function promptSignIn(reason: string): void {
-  const email = window.prompt(`${reason}\n\nEnter your email — we'll send a sign-in link:`);
-  if (!email) return;
-  void requestLogin(email.trim()).then((ok) => {
-    toast(ok ? 'Check your email for the sign-in link.' : 'Could not send the link. Try again.');
-  });
+// ---- sign-in dialog ----
+
+function openAuthDialog(reason?: string): void {
+  els.authSub.textContent =
+    reason ?? "Enter your email and we'll send you a one-tap sign-in link — no password.";
+  els.authMsg.textContent = '';
+  els.authMsg.className = 'auth-msg';
+  els.authEmail.value = me().email ?? localStorage.getItem('nixball-email') ?? '';
+  els.authDialog.showModal();
+  els.authEmail.focus();
 }
+
+els.authCancel.addEventListener('click', () => els.authDialog.close());
+
+// ---- promo code redemption ----
+
+const REDEEM_ERRORS: Record<string, string> = {
+  invalid: 'That code looks invalid.',
+  notfound: "That code doesn't exist.",
+  exhausted: 'That code has been fully used.',
+  already: 'You already redeemed that code.',
+  'sign in first': 'Sign in first.',
+};
+
+async function doRedeem(): Promise<void> {
+  const code = els.redeemCode.value.trim();
+  if (!code) return;
+  if (!me().signedIn) {
+    openAuthDialog('Sign in to redeem a promo code — unlocks save to your account.');
+    return;
+  }
+  els.redeemMsg.textContent = 'Redeeming…';
+  els.redeemMsg.className = 'muted';
+  const r = await redeemPromo(code);
+  if (r.ok) {
+    els.redeemCode.value = '';
+    const names = (r.granted ?? [])
+      .map((id) => SHOT_FX.find((f) => f.id === id)?.name ?? id)
+      .join(', ');
+    els.redeemMsg.textContent = `✓ Unlocked: ${names || 'effect'}`;
+    els.redeemMsg.className = 'ok';
+    if (currentRoom) {
+      const mine = currentRoom.members.find((m) => m.id === myId)?.shotFx ?? 'classic';
+      renderFxRow(mine);
+    }
+  } else {
+    els.redeemMsg.textContent = REDEEM_ERRORS[r.error ?? ''] ?? 'Could not redeem that code.';
+    els.redeemMsg.className = 'err';
+  }
+}
+
+els.redeemBtn.addEventListener('click', () => void doRedeem());
+els.redeemCode.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    void doRedeem();
+  }
+});
+
+// ---- animated skin previews (loops each shot effect in its lobby card) ----
+
+function startFxPreviewLoop(): void {
+  const cycle = 1500; // ms: play the effect, then a short pause, then repeat
+  const frame = (now: number): void => {
+    const canvases = document.querySelectorAll<HTMLCanvasElement>('canvas.fx-preview');
+    for (const c of canvases) {
+      const ctx = c.getContext('2d');
+      if (!ctx) continue;
+      const style = c.dataset.style ?? 'classic';
+      const cx = c.width / 2;
+      const cy = c.height / 2;
+      ctx.clearRect(0, 0, c.width, c.height);
+      // faint ball for context
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(245,245,245,0.85)';
+      ctx.fill();
+      const dur = shotDuration(style);
+      const phase = now % cycle;
+      if (phase <= dur) {
+        const seed = (Math.floor(now / cycle) * 1.7 + style.length) % (Math.PI * 2);
+        paintShot(ctx, style, cx, cy, 0.62, phase / dur, seed);
+      }
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
+els.authForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = els.authEmail.value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    els.authMsg.textContent = 'Please enter a valid email address.';
+    els.authMsg.className = 'auth-msg err';
+    return;
+  }
+  localStorage.setItem('nixball-email', email);
+  els.authMsg.textContent = 'Sending…';
+  els.authMsg.className = 'auth-msg';
+  const ok = await requestLogin(email);
+  if (ok) {
+    els.authMsg.textContent = '✓ Check your email for the sign-in link. You can close this window.';
+    els.authMsg.className = 'auth-msg ok';
+  } else {
+    els.authMsg.textContent = "Couldn't send the link. Please try again.";
+    els.authMsg.className = 'auth-msg err';
+  }
+});
 
 // Sign-in status shown in the lobby header (only when accounts are enabled).
 function renderAccountArea(): void {
@@ -478,7 +594,7 @@ function renderAccountArea(): void {
     const inBtn = document.createElement('button');
     inBtn.className = 'ghost small';
     inBtn.textContent = 'Sign in';
-    inBtn.addEventListener('click', () => promptSignIn('Sign in to NixBall.'));
+    inBtn.addEventListener('click', () => openAuthDialog());
     area.appendChild(inBtn);
   }
 }
@@ -684,6 +800,7 @@ net.on('room', () => {
 // ---------- boot ----------
 
 input.attach();
+startFxPreviewLoop();
 
 const unlockAudio = () => {
   sfx.unlock();

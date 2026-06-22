@@ -11,7 +11,7 @@ import {
   sessionCookieFrom,
   verifyMagicLink,
 } from './auth';
-import { getAccountEmail, ownedFx } from './db';
+import { getAccountEmail, ownedFx, redeemPromo } from './db';
 import { createCheckout, handleWebhook } from './payments';
 import { SHOT_FX } from '../shared/shotfx';
 
@@ -121,6 +121,25 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     } else {
       res.writeHead(302, { location: `${config.publicBaseUrl}/?login=expired` });
       res.end();
+    }
+    return true;
+  }
+
+  // ---- redeem a promo code ----
+  if (p === '/api/redeem' && req.method === 'POST') {
+    const accountId = sessionCookieFrom(req.headers.cookie);
+    if (!accountId) {
+      json(res, 401, { error: 'sign in first' });
+      return true;
+    }
+    try {
+      const { code } = JSON.parse((await readBody(req)).toString() || '{}');
+      const result = await redeemPromo(accountId, String(code ?? ''));
+      if (result.ok) json(res, 200, { ok: true, granted: result.granted });
+      else json(res, 400, { error: result.reason });
+    } catch (err) {
+      console.error('redeem error', err);
+      json(res, 400, { error: 'redeem failed' });
     }
     return true;
   }

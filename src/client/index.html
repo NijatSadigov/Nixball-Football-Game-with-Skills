@@ -66,6 +66,11 @@
 
           <h3 class="char-title">Shot effect <span class="muted" style="font-size: 13px; font-weight: 400">— the burst when you kick</span></h3>
           <div id="fx-row"></div>
+          <div id="fx-redeem" class="hidden">
+            <input id="redeem-code" placeholder="Promo code" maxlength="32" autocomplete="off" />
+            <button id="redeem-btn" class="ghost small">Redeem</button>
+            <span id="redeem-msg" class="muted"></span>
+          </div>
 
           <div class="lobby-bottom">
             <div class="chat card">
@@ -144,6 +149,21 @@
         <div class="row gap end">
           <button type="button" id="cr-cancel" class="ghost">Cancel</button>
           <button value="ok" class="primary">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="auth-dialog">
+      <form id="auth-form">
+        <h2>Sign in to NixBall</h2>
+        <p id="auth-sub" class="muted">Enter your email and we'll send you a one-tap sign-in link — no password.</p>
+        <label class="auth-field">Email
+          <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" required />
+        </label>
+        <p id="auth-msg" class="auth-msg"></p>
+        <div class="row gap end">
+          <button type="button" id="auth-cancel" class="ghost">Cancel</button>
+          <button type="submit" id="auth-send" class="primary">Send link</button>
         </div>
       </form>
     </dialog>

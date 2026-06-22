@@ -523,12 +523,12 @@ select:focus {
   opacity: 0.85;
 }
 
-.fx-swatch {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
+.fx-preview {
+  width: 54px;
+  height: 54px;
   flex: none;
-  box-shadow: 0 0 10px currentColor;
+  border-radius: 9px;
+  background: radial-gradient(circle, #1f3b2a 0%, #14241b 100%);
 }
 
 .fx-info {
@@ -567,6 +567,61 @@ select:focus {
 .fx-tag.price {
   background: var(--gold);
   color: #2a2300;
+}
+
+/* promo code redemption */
+#fx-redeem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+#redeem-code {
+  width: 160px;
+  text-transform: uppercase;
+}
+
+#redeem-msg.ok {
+  color: var(--accent);
+}
+
+#redeem-msg.err {
+  color: var(--red);
+}
+
+/* sign-in dialog */
+#auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: min(360px, 90vw);
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.auth-field input {
+  width: 100%;
+}
+
+.auth-msg {
+  min-height: 1.2em;
+  font-size: 13.5px;
+  margin: 0;
+}
+
+.auth-msg.ok {
+  color: var(--accent);
+}
+
+.auth-msg.err {
+  color: var(--red);
 }
 
 .lobby-bottom {
